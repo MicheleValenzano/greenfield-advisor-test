@@ -1,0 +1,9 @@
+fastapi==0.103.0
+uvicorn==0.22.0
+pydantic==2.6.1
+asyncpg==0.28.0
+bcrypt==4.0.1
+sqlalchemy[asyncio]==2.0.18
+pyjwt[crypto]==2.7.0
+passlib[bcrypt]==1.7.4
+pydantic[email]==2.6.1

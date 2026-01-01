@@ -1,0 +1,272 @@
+services:
+  auth-service:
+    build: ./auth-service
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+    environment:
+      - DB_HOST=db-auth
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=admin
+      - POSTGRES_PASSWORD=admin123
+      - POSTGRES_DB=greenfield_auth_db
+      - JWT_PRIVATE_KEY=secret_key
+      - JWT_PUBLIC_KEY=public_key
+    depends_on:
+      - db-auth
+    networks:
+      - greenfield-net
+
+  db-auth:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=admin
+      - POSTGRES_PASSWORD=admin123
+      - POSTGRES_DB=greenfield_auth_db
+    volumes:
+      - authdb_data:/var/lib/postgresql/data
+    networks:
+      - greenfield-net
+
+  pgadmin:
+    image: dpage/pgadmin4
+    restart: unless-stopped
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=admin@admin.com
+      - PGADMIN_DEFAULT_PASSWORD=admin
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    networks:
+      - greenfield-net
+  
+  redis-weather:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_weather_data:/data
+    networks:
+      - greenfield-net
+  
+  weather-service:
+    build: ./weather-service
+    restart: unless-stopped
+    ports:
+      - "8002:8002"
+    environment:
+      - REDIS_URL=redis://redis-weather:6379
+      - WEATHER_API_KEY=99fc693444b2d18def913e888ffbf6b7
+    depends_on:
+      - redis-weather
+    networks:
+      - greenfield-net
+  
+  image-service:
+    build: ./image-service
+    restart: unless-stopped
+    ports:
+      - "8003:8003"
+    networks:
+      - greenfield-net
+  
+  mqtt-broker:
+    image: eclipse-mosquitto:2.0
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+      - "9001:9001"
+    networks:
+      - greenfield-net
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf
+      - mosquitto_data:/mosquitto/data
+      - mosquitto_log:/mosquitto/log
+    healthcheck:
+      test: ["CMD", "mosquitto_pub", "-h", "localhost", "-p", "1883", "-t", "healthcheck", "-m", "ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+  
+  rabbit-mq:
+    image: rabbitmq:3-management-alpine
+    restart: unless-stopped
+    environment:
+      - RABBITMQ_DEFAULT_USER=guest
+      - RABBITMQ_DEFAULT_PASS=guest
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    networks:
+      - greenfield-net
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "status"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  
+  iot-gateway:
+    build: ./iot-gateway
+    restart: unless-stopped
+    environment:
+      - MQTT_HOST=mqtt-broker
+      - MQTT_PORT=1883
+      - MQTT_TOPIC=sensors/+/+/+
+      - RABBITMQ_URL=amqp://guest:guest@rabbit-mq:5672/
+      - RABBITMQ_EXCHANGE=sensor_data.topic
+    stop_grace_period: 2s
+    depends_on:
+      rabbit-mq:
+        condition: service_healthy
+      mqtt-broker:
+        condition: service_healthy
+      rabbit-infrastructure:
+        condition: service_completed_successfully
+    networks:
+      - greenfield-net
+  
+  sensor-simulator:
+    build: ./sensor-simulator
+    restart: unless-stopped
+    environment:
+      - MQTT_HOST=mqtt-broker
+      - MQTT_PORT=1883
+    stop_grace_period: 2s
+    depends_on:
+      mqtt-broker:
+        condition: service_healthy
+    networks:
+      - greenfield-net
+  
+  field-service:
+    build: ./field-service
+    restart: unless-stopped
+    ports:
+      - "8004:8004"
+    environment:
+      - RABBITMQ_URL=amqp://guest:guest@rabbit-mq:5672/
+      - RABBITMQ_FIELD_QUEUE=sensor_data.field.queue
+      - DB_HOST=db-fields
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=admin
+      - POSTGRES_PASSWORD=admin123
+      - POSTGRES_DB=greenfield_fields_db
+      - JWT_PUBLIC_KEY=public_key
+      - WEATHER_SERVICE_URL=http://weather-service:8002
+    depends_on:
+      rabbit-mq:
+        condition: service_healthy
+      db-fields:
+        condition: service_started
+      rabbit-infrastructure:
+        condition: service_completed_successfully
+    networks:
+      - greenfield-net
+  
+  db-fields:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    ports:
+      - "5433:5432"
+    environment:
+      - POSTGRES_USER=admin
+      - POSTGRES_PASSWORD=admin123
+      - POSTGRES_DB=greenfield_fields_db
+    volumes:
+      - fieldsdb_data:/var/lib/postgresql/data
+    networks:
+      - greenfield-net
+  
+  intelligent-service:
+    build: ./intelligent-service
+    restart: unless-stopped
+    ports:
+      - "8005:8005"
+    environment:
+      - RABBITMQ_URL=amqp://guest:guest@rabbit-mq:5672/
+      - RABBITMQ_INTELLIGENT_QUEUE=sensor_data.intelligent.queue
+      - DB_HOST=db-intelligent
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=admin
+      - POSTGRES_PASSWORD=admin123
+      - POSTGRES_DB=greenfield_intelligent_db
+      - JWT_PUBLIC_KEY=public_key
+      - FIELD_SERVICE_URL=http://field-service:8004
+      - REDIS_URL=redis://redis-intelligent:6379
+    depends_on:
+      rabbit-mq:
+        condition: service_healthy
+      db-intelligent:
+        condition: service_started
+      redis-intelligent:
+        condition: service_started
+      rabbit-infrastructure:
+        condition: service_completed_successfully
+    networks:
+      - greenfield-net
+  
+  db-intelligent:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    ports:
+      - "5434:5432"
+    environment:
+      - POSTGRES_USER=admin
+      - POSTGRES_PASSWORD=admin123
+      - POSTGRES_DB=greenfield_intelligent_db
+    volumes:
+      - intelligentdb_data:/var/lib/postgresql/data
+    networks:
+      - greenfield-net
+  
+  redis-intelligent:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis_intelligent_data:/data
+    networks:
+      - greenfield-net
+  
+  rabbit-infrastructure:
+    build: ./rabbit-infrastructure
+    restart: "no"
+    environment:
+      - RABBITMQ_URL=amqp://guest:guest@rabbit-mq:5672/
+      - RABBITMQ_SENSORS_EXCHANGE=sensor_data.topic
+      - RABBITMQ_ALERTS_EXCHANGE=alerts.topic
+      - RABBITMQ_FIELD_QUEUE=sensor_data.field.queue
+      - RABBITMQ_INTELLIGENT_QUEUE=sensor_data.intelligent.queue
+      - RABBITMQ_NOTIFICATIONS_QUEUE=sensor_data.notifications.queue
+      - RABBITMQ_ALERTS_QUEUE=alerts.queue
+      - RABBITMQ_FIELD_ROUTING_KEY=field.*.device.*
+      - RABBITMQ_ALERTS_ROUTING_KEY=alerts.* # VERIFICARE
+    depends_on:
+      rabbit-mq:
+        condition: service_healthy
+    networks:
+      - greenfield-net
+  
+  # ENVIRONMENT INTELLIGENT SERVICE DA COMPLETARE
+
+volumes:
+  authdb_data:
+  pgadmin_data:
+  redis_weather_data:
+  rabbitmq_data:
+  mosquitto_data:
+  mosquitto_log:
+  fieldsdb_data:
+  intelligentdb_data:
+  redis_intelligent_data:
+
+networks:
+  greenfield-net:
