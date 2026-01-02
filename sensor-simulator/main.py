@@ -7,7 +7,9 @@ from asyncio_mqtt import Client
 BROKER = "mqtt-broker"
 PORT = 1883
 
-PUBLISH_INTERVAL = 50
+SYSTEM_STATUS_TOPIC = "system/gateway/status"
+
+PUBLISH_INTERVAL = 30
 
 # RECUPERARE DAL SERVIZIO FIELDS
 
@@ -55,13 +57,21 @@ async def publish_sensor_data(client):
                     }
 
                     topic = f"sensors/{field_id}/{sensor_id}/{metric}"
-                    await client.publish(topic, json.dumps(payload), qos=1, retain=True)
+                    await client.publish(topic, json.dumps(payload), qos=1)
                     print(f"Pubblicato sul topic {topic}: {payload}")
         await asyncio.sleep(PUBLISH_INTERVAL)
 
+async def wait_for_broker(client):
+    async with client.unfiltered_messages() as messages:
+        await client.subscribe(SYSTEM_STATUS_TOPIC)
+        async for message in messages:
+            if message.topic == SYSTEM_STATUS_TOPIC and message.payload.decode() == "ready":
+                print("IoT-Gateway è pronto a ricevere dati.")
+                return
 
 async def main():
     async with Client(BROKER, PORT) as client:
+        await wait_for_broker(client)
         await publish_sensor_data(client)
 
 if __name__ == "__main__":

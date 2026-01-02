@@ -12,6 +12,10 @@ MQTT_TOPIC = os.getenv("MQTT_TOPIC", "sensors/+/+/+")
 RABBITMQ_URL = os.getenv("RABBITMQ_URL", "amqp://guest:guest@rabbit-mq/")
 RABBITMQ_EXCHANGE = os.getenv("RABBITMQ_SENSORS_EXCHANGE", "sensor_data.topic")
 
+MQTT_CLIENT_ID = "iot-gateway"
+
+SYSTEM_STATUS_TOPIC = "system/gateway/status"
+
 def mqtt_to_sensor_reading(mqtt_topic: str, payload: bytes) -> SensorReading:
     try:
         parts = mqtt_topic.split('/')
@@ -38,11 +42,22 @@ def mqtt_to_sensor_reading(mqtt_topic: str, payload: bytes) -> SensorReading:
 publisher = RabbitMQPublisher(RABBITMQ_URL, RABBITMQ_EXCHANGE)
 
 async def mqtt_loop():
-    async with Client(MQTT_HOST, MQTT_PORT) as client:
+    async with Client(MQTT_HOST, MQTT_PORT, client_id=MQTT_CLIENT_ID, clean_session=False) as client:
         async with client.unfiltered_messages() as messages:
-            await client.subscribe(MQTT_TOPIC)
+
+            await client.subscribe(MQTT_TOPIC, qos=1)
+
+            await client.publish(SYSTEM_STATUS_TOPIC, "ready", qos=1, retain=True)
     
             async for message in messages:
+
+                if message.topic == SYSTEM_STATUS_TOPIC:
+                    continue
+
+                if message.retain:
+                    print(f"Ignorato messaggio retained sul topic {message.topic}")
+                    continue
+
                 try:
                     sensor_reading = mqtt_to_sensor_reading(message.topic, message.payload)
                     await publisher.publish(sensor_reading.dict())

@@ -142,6 +142,8 @@ services:
     depends_on:
       mqtt-broker:
         condition: service_healthy
+      iot-gateway:
+        condition: service_started
     networks:
       - greenfield-net
   
