@@ -53,7 +53,9 @@ class FieldCreation(BaseModel):
 class FieldOutput(BaseModel):
     field: str = Field(..., example="field123456", description="Identificativo univoco del campo")
     name: str = Field(..., example="Vigna Nord", description="Nome del campo")
-    city: str = Field(..., example="Rutigliano", description="Posizione geografica del campo nel formato 'Città (latitudine, longitudine)'")
+    city: str = Field(..., example="Rutigliano", description="Posizione geografica del campo nel formato")
+    latitude: float = Field(..., example=41.1234, description="Latitudine del campo")
+    longitude: float = Field(..., example=16.1234, description="Longitudine del campo")
     cultivation_type: str = Field(..., example="Uva da tavola", description="Tipo di coltivazione presente nel campo")
     size: float = Field(..., example=2.5, description="Dimensione del campo in ettari")
 

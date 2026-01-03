@@ -22,7 +22,9 @@ from rule_strategy import RuleBasedStrategy
 from analyzer import IntelligentAnalyzer
 from datetime import datetime, timezone
 import joblib
-from ml_chain import MLAnalysisChainContext, build_ml_chain, ChainHandler
+from chain import MLAnalysisChainContext, build_ml_chain, ChainHandler
+from field_service_client import FieldServiceClient
+from functools import lru_cache
 
 RABBITMQ_URL = os.getenv("RABBITMQ_URL", "amqp://guest:guest@rabbit-mq/")
 RABBITMQ_INTELLIGENT_QUEUE = os.getenv("RABBITMQ_INTELLIGENT_QUEUE", "sensor-readings-queue")
@@ -69,8 +71,12 @@ def get_rule_analyzer() -> IntelligentAnalyzer[RuleAnalysisContext]:
 def get_ml_analyzer() -> IntelligentAnalyzer[MLAnalysisContext]:
     return IntelligentAnalyzer(strategy=ml_strategy_instance)
 
-def get_ml_chain_real(analyzer: IntelligentAnalyzer[MLAnalysisContext] = Depends(get_ml_analyzer), db: AsyncSession = Depends(get_db)) -> MLAnalysisChainContext:
-    return build_ml_chain(db=db, analyzer=analyzer)
+@lru_cache()
+def get_field_service_client(request: Request) -> FieldServiceClient:
+    return FieldServiceClient(client=request.app.state.field_service_client)
+
+def get_ml_chain_real(analyzer: IntelligentAnalyzer[MLAnalysisContext] = Depends(get_ml_analyzer), field_service: FieldServiceClient = Depends(get_field_service_client)) -> ChainHandler:
+    return build_ml_chain(analyzer=analyzer, field_service=field_service)
 
 def decode_access_token(jwt_token: str = Depends(oauth2_scheme)):
     try:
@@ -95,6 +101,8 @@ async def lifespan(app: FastAPI):
 
     rule_analyzer = get_rule_analyzer()
 
+    app.state.field_service_client = httpx.AsyncClient(base_url=FIELD_SERVICE_URL, timeout=httpx.Timeout(5.0))
+
     global consumer
     consumer = RabbitMQIntelligentConsumer(RABBITMQ_URL, RABBITMQ_INTELLIGENT_QUEUE, RABBITMQ_ALERTS_EXCHANGE, rule_analyzer, REDIS_URL, REDIS_MAX_CONNECTIONS)
     await consumer.connect()
@@ -114,6 +122,7 @@ async def lifespan(app: FastAPI):
     if consumer:
         await consumer.close()
     await app.state.fields_client.aclose()
+    await app.state.field_service_client.aclose()
     if app.state.redis:
         await app.state.redis.close()
 
@@ -297,27 +306,44 @@ async def list_field_alerts(field: str, limit: int, db: AsyncSession = Depends(g
     return alerts
 
 @app.get("/ai-prediction", status_code=200)
-async def ai_prediction(field: str, chain: ChainHandler = Depends(get_ml_chain_real), db: AsyncSession = Depends(get_db), token: dict = Depends(decode_access_token)):
+async def ai_prediction(field: str, chain: ChainHandler = Depends(get_ml_chain_real), db: AsyncSession = Depends(get_db), token_payload: dict = Depends(decode_access_token), raw_jwt_token: str = Depends(oauth2_scheme)):
 
     if not model:
         raise HTTPException(503, detail="Modello di Machine Learning non disponibile.")
+    
+    target_sensors = ["temperature", "humidity", "soil_moisture"]
 
     context = MLAnalysisChainContext(
         payload={
             'field': field,
+            'sensor_types': target_sensors,
             'window_size': 50
-        }
+        },
+        token=raw_jwt_token
     )
 
     try:
         final_context = await chain.handle(context)
+
+        formatted_input = None
+        
+        if final_context.features is not None:
+            values_list = final_context.features.flatten().tolist()
+        
+            # Dizionario con accoppiamento sensore - valore medio
+            if len(values_list) == len(target_sensors):
+                formatted_input = dict(zip(target_sensors, values_list))
+            else:
+                formatted_input = values_list
+
         return {
             "status": final_context.prediction,
             "advice": final_context.advice,
             "confidence": final_context.confidence_score,
             "details": {
-                'input_recieved': final_context.features
+                'input_recieved': formatted_input,
             }
         }
     except Exception as e:
+        print(f"Errore durante l'analisi Machine Learning: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Errore durante l'analisi Machine Learning: {str(e)}")

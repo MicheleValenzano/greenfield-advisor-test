@@ -10,6 +10,7 @@ from passlib.context import CryptContext
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import IntegrityError
 
 from datetime import datetime, timedelta
 
@@ -183,8 +184,12 @@ async def register(user: UserRegister, db : AsyncSession = Depends(get_db)):
     )
 
     db.add(new_user)
-    await db.commit()
-    await db.refresh(new_user)
+    try:
+        await db.commit()
+        await db.refresh(new_user)
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail="Errore durante la registrazione dell'utente.")
     
     return {"message": "Utente registrato con successo."}
 
@@ -202,8 +207,12 @@ async def update_user(updated_data: UserAdditionalFields, token: str = Depends(o
     if updated_data.location is not None: db_user.location = updated_data.location
     if updated_data.birthdate is not None: db_user.birthdate = updated_data.birthdate
 
-    await db.commit()
-    await db.refresh(db_user)
+    try:
+        await db.commit()
+        await db.refresh(db_user)
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail="Errore durante l'aggiornamento dell'utente.")
 
     return db_user
 
@@ -217,7 +226,11 @@ async def change_password(password_data: UserPasswordUpdate, token: str = Depend
     new_hashed_password = pwd_context.hash(password_data.password)
     db_user.hashed_password = new_hashed_password
 
-    await db.commit()
-    await db.refresh(db_user)
+    try:
+        await db.commit()
+        await db.refresh(db_user)
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail="Errore durante l'aggiornamento della password.")
 
     return {"message": "Password aggiornata con successo."}

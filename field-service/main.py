@@ -1,12 +1,14 @@
 import asyncio
 import os
 from consumer import RabbitMQFieldConsumer
-from fastapi import FastAPI, HTTPException, Depends, status, Request
+from fastapi import FastAPI, HTTPException, Depends, status, Request, Query
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from fastapi.security import OAuth2PasswordBearer
 from schemas import FieldCreation, FieldOutput, FieldUpdate, SensorTypeCreation, NewSensorInField, SensorInFieldOutput, SensorReadingOutput
-from sqlalchemy import select
+from sqlalchemy import select, func
+from sqlalchemy.orm import aliased
+from collections import defaultdict
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
 from database import engine, Base, get_db
@@ -15,6 +17,7 @@ import re
 import jwt
 import httpx
 from contextlib import asynccontextmanager
+from typing import List
 
 RABBITMQ_URL = os.getenv("RABBITMQ_URL", "amqp://guest:guest@rabbit-mq:5672/")
 RABBITMQ_FIELD_QUEUE = os.getenv("RABBITMQ_FIELD_QUEUE", "sensor_data.field.queue")
@@ -364,6 +367,53 @@ async def get_field_sensor_readings(field_name: str, limit: int = 10, db: AsyncS
     readings = result.scalars().all()
     return [r for r in readings]
 
+# Ottengo tutte le rilevazioni raggruppate per tipo di sensore
+@app.get("/fields/{field_name}/latest-types-readings")
+async def get_last_readings_by_sensor_type(field_name: str, limit: int = 50, db: AsyncSession = Depends(get_db), token: dict = Depends(decode_access_token)):
+    result = await db.execute(select(Field).where(Field.field == field_name))
+    field_obj = result.scalars().first()
+    if not field_obj:
+        raise HTTPException(status_code=404, detail="Campo non trovato.")
+    
+    if field_obj.owner_id != token["sub"]:
+        raise HTTPException(status_code=403, detail="Non hai i permessi per visualizzare le letture dei sensori di questo campo.")
+    
+    stmt = (
+        select(
+            SensorReadings,
+            func.row_number()
+            .over(
+                partition_by=SensorReadings.sensor_type,
+                order_by=SensorReadings.timestamp.desc()
+            )
+            .label("rn")
+        )
+        .where(SensorReadings.field_id == field_name)
+    ).subquery()
+
+    sr = aliased(SensorReadings, stmt)
+
+    query = (
+        select(sr)
+        .where(stmt.c.rn <= limit)
+        .order_by(sr.sensor_type, sr.timestamp.desc())
+    )
+
+    result = await db.execute(query)
+    rows = result.scalars().all()
+
+    grouped_readings = defaultdict(list)
+    for row in rows:
+        grouped_readings[row.sensor_type].append({
+            "sensor_id": row.sensor_id,
+            "field_id": row.field_id,
+            "value": row.value,
+            "unit": row.unit,
+            "timestamp": row.timestamp
+        })
+
+    return grouped_readings
+
 @app.put("/fields/{field_name}/sensors/{sensor_id}/change_state", status_code=200)
 async def activate_deactivate_sensor(field_name: str, sensor_id: str, active: bool, db: AsyncSession = Depends(get_db), token: dict = Depends(decode_access_token)):
     result = await db.execute(select(Field).where(Field.field == field_name))
@@ -410,3 +460,60 @@ async def validate_rule_internal(field: str, sensor_type: str, user_id: int, db:
         raise HTTPException(status_code=404, detail="Tipo di sensore non trovato.")
 
     return {"message": "Regola valida."}
+
+@app.get("/fields/{field_name}/specific-types-readings")
+async def get_specific_types_readings(field_name: str, sensor_types: List[str] = Query(...), limit: int = 50, db: AsyncSession = Depends(get_db), token: dict = Depends(decode_access_token)):
+    result = await db.execute(select(Field).where(Field.field == field_name))
+    field = result.scalars().first()
+    if not field:
+        raise HTTPException(status_code=404, detail="Campo non trovato.")
+    
+    if field.owner_id != token["sub"]:
+        raise HTTPException(status_code=403, detail="Non hai i permessi per visualizzare le letture dei sensori di questo campo.")
+    
+    stmt = (
+        select(
+            SensorReadings,
+            func.row_number()
+            .over(
+                partition_by=SensorReadings.sensor_type,
+                order_by=SensorReadings.timestamp.desc()
+            )
+            .label("rn")
+        )
+        .where(
+            SensorReadings.field_id == field_name,
+            SensorReadings.sensor_type.in_(sensor_types)
+        )
+    ).subquery()
+
+    sr = aliased(SensorReadings, stmt)
+
+    query = (
+        select(sr)
+        .where(stmt.c.rn <= limit)
+        .order_by(sr.sensor_type, sr.timestamp.desc())
+    )
+
+    result = await db.execute(query)
+    rows = result.scalars().all()
+
+    grouped_readings = defaultdict(list)
+
+    for row in rows:
+        grouped_readings[row.sensor_type].append({
+            "sensor_id": row.sensor_id,
+            "field_id": row.field_id,
+            "value": row.value,
+            "unit": row.unit,
+            "timestamp": row.timestamp
+        })
+    
+    ordered_grouped_readings = {}
+    for sensor_type in sensor_types:
+        if sensor_type in grouped_readings:
+            ordered_grouped_readings[sensor_type] = grouped_readings[sensor_type]
+        else:
+            ordered_grouped_readings[sensor_type] = []
+
+    return ordered_grouped_readings

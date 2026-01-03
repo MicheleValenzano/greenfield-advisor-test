@@ -21,7 +21,6 @@ class SensorType(Base):
 
     id = Column(Integer, primary_key=True, unique=True, index=True)
     sensor = Column(String, Computed("('sensor' || id)::text", persisted=True), unique=True, index=True, nullable=False)
-    # vediamo se chiamarlo sensor_type
     type_name = Column(String, nullable=False, unique=True, index=True)
     description = Column(String, nullable=True)
     unit = Column(String, nullable=False)
