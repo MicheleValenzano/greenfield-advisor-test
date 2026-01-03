@@ -4,8 +4,8 @@ from fastapi.responses import JSONResponse
 from fastapi.requests import Request
 from fastapi.exceptions import RequestValidationError
 from schemas import RuleCreation, RuleOutput
-from models import Rule
-from sqlalchemy import select
+from models import Rule, Alert
+from sqlalchemy import select, update, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
 from database import engine, Base, get_db
@@ -20,9 +20,13 @@ from contexts import MLAnalysisContext, RuleAnalysisContext
 from ml_strategy import MLStrategy
 from rule_strategy import RuleBasedStrategy
 from analyzer import IntelligentAnalyzer
+from datetime import datetime, timezone
+import joblib
+from ml_chain import MLAnalysisChainContext, build_ml_chain, ChainHandler
 
 RABBITMQ_URL = os.getenv("RABBITMQ_URL", "amqp://guest:guest@rabbit-mq/")
 RABBITMQ_INTELLIGENT_QUEUE = os.getenv("RABBITMQ_INTELLIGENT_QUEUE", "sensor-readings-queue")
+RABBITMQ_ALERTS_EXCHANGE = os.getenv("RABBITMQ_ALERTS_EXCHANGE", "alerts.topic")
 
 FIELD_SERVICE_URL = os.getenv("FIELD_SERVICE_URL", "http://field-service:8004")
 
@@ -53,17 +57,9 @@ ALGORITHM = "RS256"
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
-class MaintenanceModel:
-    def load(self):
-        print("Caricamento modello pesante in memoria...")
-    
-    def predict(self, features: list):
-        # Logica finta: se la somma delle feature > 10, predice guasto (1)
-        risk = sum(features) / 100
-        return {"risk_score": risk, "maintenance_needed": risk > 0.8}
-
-ml_model = MaintenanceModel()
-ml_strategy_instance = MLStrategy(model=ml_model)
+MODEL_PATH = "greenfield_model.pkl"
+model = None
+ml_strategy_instance = None
 
 rule_strategy_instance = RuleBasedStrategy()
 
@@ -72,6 +68,9 @@ def get_rule_analyzer() -> IntelligentAnalyzer[RuleAnalysisContext]:
 
 def get_ml_analyzer() -> IntelligentAnalyzer[MLAnalysisContext]:
     return IntelligentAnalyzer(strategy=ml_strategy_instance)
+
+def get_ml_chain_real(analyzer: IntelligentAnalyzer[MLAnalysisContext] = Depends(get_ml_analyzer), db: AsyncSession = Depends(get_db)) -> MLAnalysisChainContext:
+    return build_ml_chain(db=db, analyzer=analyzer)
 
 def decode_access_token(jwt_token: str = Depends(oauth2_scheme)):
     try:
@@ -85,13 +84,19 @@ def decode_access_token(jwt_token: str = Depends(oauth2_scheme)):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
 
-    # potrei caricare il modello TODO
-    ml_model.load()
+    try:
+        global model
+        model = joblib.load(MODEL_PATH)
+        global ml_strategy_instance
+        ml_strategy_instance = MLStrategy(model=model)
+    except Exception as e:
+        print("Errore nel caricamento del modello ML:", e)
+        ml_strategy_instance = None
 
     rule_analyzer = get_rule_analyzer()
 
     global consumer
-    consumer = RabbitMQIntelligentConsumer(RABBITMQ_URL, RABBITMQ_INTELLIGENT_QUEUE, rule_analyzer, REDIS_URL, REDIS_MAX_CONNECTIONS)
+    consumer = RabbitMQIntelligentConsumer(RABBITMQ_URL, RABBITMQ_INTELLIGENT_QUEUE, RABBITMQ_ALERTS_EXCHANGE, rule_analyzer, REDIS_URL, REDIS_MAX_CONNECTIONS)
     await consumer.connect()
 
     try:
@@ -250,17 +255,69 @@ async def list_rules(field: str, db: AsyncSession = Depends(get_db), token: dict
 
     return rules
 
+@app.post("/archive-alerts", status_code=200)
+async def archive_all_alerts(db: AsyncSession = Depends(get_db), token: dict = Depends(decode_access_token)):
+    cutoff = datetime.now(timezone.utc)
+    query = update(Alert).where(Alert.owner_id == token["sub"], Alert.active == True, Alert.timestamp <= cutoff).values(active=False)
+    await db.execute(query)
+    await db.commit()
+
+    return {"message": "Tutti gli alert attivi sono stati archiviati."}
+
+@app.get("/alerts")
+async def list_alerts(limit: int, db: AsyncSession = Depends(get_db), token: dict = Depends(decode_access_token)):
+
+    if limit < 1 or limit > 100:
+        raise HTTPException(status_code=400, detail="Il parametro 'limit' deve essere compreso tra 1 e 100.")
+
+    result = await db.execute(select(Alert).where(Alert.owner_id == token["sub"], Alert.active == True).order_by(desc(Alert.timestamp)).limit(limit))
+    alerts = result.scalars().all()
+
+    return alerts
+
+@app.post("/archive-alerts/{field}", status_code=200)
+async def archive_field_alerts(field: str, db: AsyncSession = Depends(get_db), token: dict = Depends(decode_access_token)):
+    cutoff = datetime.now(timezone.utc)
+    query = update(Alert).where(Alert.owner_id == token["sub"], Alert.field == field, Alert.active == True, Alert.timestamp <= cutoff).values(active=False)
+    await db.execute(query)
+    await db.commit()
+
+    return {"message": f"Tutti gli alert attivi del campo sono stati archiviati."}
+
+# Recupero tutti gli alert della field specificata, limitati da un parametro 'limit'
+@app.get("/alerts/{field}", status_code=200)
+async def list_field_alerts(field: str, limit: int, db: AsyncSession = Depends(get_db), token: dict = Depends(decode_access_token)):
+
+    if limit < 1 or limit > 100:
+        raise HTTPException(status_code=400, detail="Il parametro 'limit' deve essere compreso tra 1 e 100.")
+
+    result = await db.execute(select(Alert).where(Alert.owner_id == token["sub"], Alert.field == field, Alert.active == True).order_by(desc(Alert.timestamp)).limit(limit))
+    alerts = result.scalars().all()
+
+    return alerts
+
 @app.get("/ai-prediction", status_code=200)
-async def ai_prediction(analyzer: IntelligentAnalyzer[MLAnalysisContext] = Depends(get_ml_analyzer), db: AsyncSession = Depends(get_db), token: dict = Depends(decode_access_token)):
-    
-    context = MLAnalysisContext(
-        payload={"features": [10, 20, 30, 40]}  # Esempio di features
+async def ai_prediction(field: str, chain: ChainHandler = Depends(get_ml_chain_real), db: AsyncSession = Depends(get_db), token: dict = Depends(decode_access_token)):
+
+    if not model:
+        raise HTTPException(503, detail="Modello di Machine Learning non disponibile.")
+
+    context = MLAnalysisChainContext(
+        payload={
+            'field': field,
+            'window_size': 50
+        }
     )
 
-    # Implementazione CHAIN OF RESPONSIBILITY
-
     try:
-        prediction = await analyzer.execute(context)
-        return prediction
+        final_context = await chain.handle(context)
+        return {
+            "status": final_context.prediction,
+            "advice": final_context.advice,
+            "confidence": final_context.confidence_score,
+            "details": {
+                'input_recieved': final_context.features
+            }
+        }
     except Exception as e:
-        raise HTTPException(status_code=500, detail="Errore durante l'analisi Machine Learning.")
+        raise HTTPException(status_code=500, detail=f"Errore durante l'analisi Machine Learning: {str(e)}")

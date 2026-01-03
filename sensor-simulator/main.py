@@ -9,7 +9,7 @@ PORT = 1883
 
 SYSTEM_STATUS_TOPIC = "system/gateway/status"
 
-PUBLISH_INTERVAL = 30
+PUBLISH_INTERVAL = 100
 
 # RECUPERARE DAL SERVIZIO FIELDS
 
@@ -43,6 +43,7 @@ def generate_value(key, cfg):
     return round(v, 2)
 
 async def publish_sensor_data(client):
+    await asyncio.sleep(5) # Introduco piccolo un ritardo di 5 secondi per permettere al sistema di avviarsi correttamente
     while True:
         for field_id, sensors in FIELDS.items():
             for sensor_id, metrics in sensors.items():

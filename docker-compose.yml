@@ -194,6 +194,7 @@ services:
     environment:
       - RABBITMQ_URL=amqp://guest:guest@rabbit-mq:5672/
       - RABBITMQ_INTELLIGENT_QUEUE=sensor_data.intelligent.queue
+      - RABBITMQ_ALERTS_EXCHANGE=alerts.topic
       - DB_HOST=db-intelligent
       - POSTGRES_PORT=5432
       - POSTGRES_USER=admin
@@ -247,13 +248,33 @@ services:
       - RABBITMQ_ALERTS_EXCHANGE=alerts.topic
       - RABBITMQ_FIELD_QUEUE=sensor_data.field.queue
       - RABBITMQ_INTELLIGENT_QUEUE=sensor_data.intelligent.queue
-      - RABBITMQ_NOTIFICATIONS_QUEUE=sensor_data.notifications.queue
-      - RABBITMQ_ALERTS_QUEUE=alerts.queue
+      # - RABBITMQ_READINGS_NOTIFICATION_QUEUE=sensor_data.notifications.queue (va nel servizio di notifica)
+      # - RABBITMQ_ALERTS_QUEUE=alerts.queue (va nel servizio di notifica)
       - RABBITMQ_FIELD_ROUTING_KEY=field.*.device.*
-      - RABBITMQ_ALERTS_ROUTING_KEY=alerts.* # VERIFICARE
+      # - RABBITMQ_ALERTS_ROUTING_KEY=alerts.* # VERIFICARE
     depends_on:
       rabbit-mq:
         condition: service_healthy
+    networks:
+      - greenfield-net
+    
+  notification-service:
+    build: ./notification-service
+    restart: unless-stopped
+    ports:
+      - "8006:8006"
+    environment:
+      - RABBITMQ_URL=amqp://guest:guest@rabbit-mq:5672/
+      - RABBITMQ_SENSORS_EXCHANGE=sensor_data.topic
+      - RABBITMQ_ALERTS_EXCHANGE=alerts.topic
+      - RABBITMQ_FIELD_ROUTING_KEY=field.*.device.*
+      - RABBITMQ_ALERTS_ROUTING_KEY=alerts.*
+      - JWT_PUBLIC_KEY=public_key
+    depends_on:
+      rabbit-mq:
+        condition: service_healthy
+      rabbit-infrastructure:
+        condition: service_completed_successfully
     networks:
       - greenfield-net
   

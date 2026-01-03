@@ -1,0 +1,7 @@
+aio-pika==8.1.1
+fastapi==0.103.0
+uvicorn==0.22.0
+pyjwt[crypto]==2.7.0
+passlib[bcrypt]==1.7.4
+redis==4.5.5
+httpx==0.24.1
