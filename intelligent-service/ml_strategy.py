@@ -10,8 +10,11 @@ class MLStrategy(AnalysisStrategy):
 
         features = context.payload["features"]
 
-        if not features:
+        if features is None:
             raise ValueError("Features non fornite per l'analisi ML.")
+        
+        if isinstance(features, np.ndarray) and features.size == 0:
+            raise ValueError("Feature vuote per l'analisi ML.")
 
         if isinstance(features, list):
             features = np.array(features).reshape(1, -1)

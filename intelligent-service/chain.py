@@ -165,9 +165,12 @@ class MLInferenceHandler(ChainHandler):
         
         try:
             prediction = await self.analyzer.execute(MLAnalysisContext(payload={"features": features}))
+            print("Prediction result:", prediction)
+            print("Prediction type:", type(prediction))
             context.prediction = prediction.get("label", "N/A")
             context.confidence_score = prediction.get("confidence", 0.0)
         except Exception as e:
+            print(f"Errore durante l'inferenza del modello: {e}")
             context.prediction = "Errore durante l'inferenza del modello."
             context.confidence_score = 0.0
             context.stop = True
@@ -183,11 +186,14 @@ class AdviceGenerationHandler(ChainHandler):
             return context
         
         advice_map = {
-            "ottimale": "I parametri sono nella norma. Nessuna azione richiesta.",
-            "attenzione": "Monitorare l'irrigazione nelle prossime ore.",
-            "critico": "Irrigazione necessaria immediatamente!"
+            "Ottimale": "Le condizioni sono ideali. Mantieni il monitoraggio regolare senza interventi.",
+            "Pericolo: Stress Idrico Severo": "URGENTE: Irrigare immediatamente. La pianta è in grave sofferenza. Considera di ombreggiare temporaneamente se il sole è diretto.",
+            "Attenzione: Carenza Acqua": "Il terreno si sta asciugando troppo. Pianifica un ciclo di irrigazione nelle prossime ore, preferibilmente al tramonto o all'alba.",
+            "Rischio: Malattie Fungine": "Umidità e calore eccessivi. Sospendi l'irrigazione fogliare, migliora la ventilazione e considera un trattamento preventivo antifungino.",
+            "Attenzione: Rischio Gelata": "Temperature critiche. Proteggi le piante con tessuto non tessuto (TNT) o pacciamatura e sospendi le irrigazioni serali.",
+            "Attenzione: Ristagno Idrico": "Troppa acqua nel terreno! Interrompi immediatamente l'irrigazione. Verifica il drenaggio per evitare marciumi radicali."
         }
-        context.advice = advice_map.get(prediction.lower(), "Nessun consiglio disponibile per questa previsione.")
+        context.advice = advice_map.get(prediction, "Nessun consiglio disponibile per questa previsione.")
 
         return await self.call_next(context)
 

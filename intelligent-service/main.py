@@ -102,6 +102,7 @@ async def lifespan(app: FastAPI):
     rule_analyzer = get_rule_analyzer()
 
     app.state.field_service_client = httpx.AsyncClient(base_url=FIELD_SERVICE_URL, timeout=httpx.Timeout(5.0))
+    app.state.fields_client = httpx.AsyncClient(base_url=FIELD_SERVICE_URL, timeout=httpx.Timeout(5.0))
 
     global consumer
     consumer = RabbitMQIntelligentConsumer(RABBITMQ_URL, RABBITMQ_INTELLIGENT_QUEUE, RABBITMQ_ALERTS_EXCHANGE, rule_analyzer, REDIS_URL, REDIS_MAX_CONNECTIONS)
@@ -112,8 +113,6 @@ async def lifespan(app: FastAPI):
         app.state.redis = aioredis.Redis(decode_responses=True, connection_pool=pool)
     except Exception:
         app.state.redis = None
-
-    app.state.fields_client = httpx.AsyncClient(base_url=FIELD_SERVICE_URL, timeout=httpx.Timeout(5.0))
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
