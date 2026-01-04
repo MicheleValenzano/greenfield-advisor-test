@@ -270,6 +270,8 @@ services:
       - RABBITMQ_FIELD_ROUTING_KEY=field.*.device.*
       - RABBITMQ_ALERTS_ROUTING_KEY=alerts.*
       - JWT_PUBLIC_KEY=public_key
+      - FIELD_SERVICE_URL=http://field-service:8004
+      - REDIS_URL=redis://redis-notifications:6379
     depends_on:
       rabbit-mq:
         condition: service_healthy
@@ -278,7 +280,48 @@ services:
     networks:
       - greenfield-net
   
-  # ENVIRONMENT INTELLIGENT SERVICE DA COMPLETARE
+  redis-notifications:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6381:6379"
+    volumes:
+      - redis_notifications_data:/data
+    networks:
+      - greenfield-net
+  
+  api-gateway:
+    build: ./api-gateway
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - AUTH_SERVICE_URL=http://auth-service:8001
+      - WEATHER_SERVICE_URL=http://weather-service:8002
+      - IMAGE_SERVICE_URL=http://image-service:8003
+      - FIELD_SERVICE_URL=http://field-service:8004
+      - INTELLIGENT_SERVICE_URL=http://intelligent-service:8005
+      - NOTIFICATION_SERVICE_URL=ws://notification-service:8006
+      - REDIS_URL=redis://redis-api-gateway:6379
+    depends_on:
+      - auth-service
+      - weather-service
+      - image-service
+      - field-service
+      - intelligent-service
+      - notification-service
+    networks:
+      - greenfield-net
+  
+  redis-api-gateway:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6382:6379"
+    volumes:
+      - redis_api_gateway_data:/data
+    networks:
+      - greenfield-net
 
 volumes:
   authdb_data:
@@ -290,6 +333,8 @@ volumes:
   fieldsdb_data:
   intelligentdb_data:
   redis_intelligent_data:
+  redis_notifications_data:
+  redis_api_gateway_data:
 
 networks:
   greenfield-net:

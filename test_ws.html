@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>WebSocket Test</title>
+</head>
+<body>
+  <h1>WebSocket Test</h1>
+  <script>
+    const TOKEN = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOjIsImV4cCI6MTc2NzUzNTk4MX0.ADnHluJQwz0zMYWoMfq2yGgLSA0F3Sxhu-ngjEZfyaVjIa5g5ZO4VYJ4DGLHfwZFTX4i6AM4hvGANQo3mFI1QtkCyaGlDJOdv4KKAwrSU4TMNAnoN01PXw0VnlzQ0z0jatOUGgkyQWrjcBCsercnH5_lZk9weG0naJ3dj1yXidNWj2J9YmkY4vbQIIWeF192hVGvSDiSe14u7J2-Yh8Yba1j32V0F9pzcW5lhl-LYk9V41QkouZQZbRibIZ3NJ1Upcm2grcewM6jyvMc2OA5mgEVsDWA4APXM3k5Y0YO-tRwVfFxyrx2ACSxnh-RiH_bYjK2DFgMfPq4EsKQYPrRQG7WQUcOHmokypRdssMkwW346C39KmFEyLRrGMP2RchnI-Sv_an8FKlBxKpY3IrQLP8CNEGVxEpxqnlTW2xeHqbenNOwtDGBI5ndFPVDUSRqEM_tZthLhMG5RAkSEmqhvL8KKur3lcXbbJo9OlwGIr1DXxE866ScxS5WGxLZD8tgTZGuA5BFtK5scQyh7LbafyiXWDrtS6Tr7bAcjNoWPXcL8_lcjHjYSCI6hBO_7tiJ27Zp0XL464JLL-ZLZcT7lya8Wrf8tP7xDIrfVqfX66fdi3coyDujjlueKHaMgeXbrHxzjksmWPefAmUUaAV2LLOYmwYV77x89cp4V1a1PAE";
+    const FIELD = "field1"; 
+    const GATEWAY_URL = "wss://localhost:8000/ws/notifications";
+
+    // --- CONNESSIONE ---
+    // Costruiamo l'URL con i parametri richiesti dal Gateway e dal Service
+    const url = `${GATEWAY_URL}?token=${TOKEN}&field=${FIELD}`;
+
+    console.log("Tentativo di connessione a:", url);
+
+    const ws = new WebSocket(url);
+
+    // --- GESTIONE EVENTI ---
+
+    ws.onopen = () => {
+        console.log("%c✅ Connessione Stabilita!", "color: green; font-weight: bold; font-size: 14px");
+        console.log("Ora puoi inviare messaggi o attendere notifiche.");
+    };
+
+    ws.onmessage = (event) => {
+        console.log("%c📩 Messaggio Ricevuto:", "color: blue", event.data);
+    };
+
+    ws.onclose = (event) => {
+        console.log("%c❌ Connessione Chiusa", "color: red; font-weight: bold");
+        console.log(`Code: ${event.code}`);
+        console.log(`Reason: ${event.reason}`);
+        
+        // Interpretazione codici basata sul tuo codice Python
+        if (event.code === 1006) {
+            console.log("⚠️ Handshake fallito (Errore 401, 403, 404 o 429 lato Gateway) oppure certificato SSL non accettato.");
+        } else if (event.code === 1008) {
+            console.log("⚠️ Policy Violation: Token valido ma permesso negato dal backend (es. non sei owner del campo).");
+        } else if (event.code === 1013) {
+            console.log("⚠️ Rate Limit WebSocket superato (Troppe connessioni).");
+        }
+    };
+
+    ws.onerror = (error) => {
+        console.log("Errore WebSocket generico:", error);
+    };
+
+    // Funzione helper per testare l'invio (se il backend lo supportasse)
+    function sendMsg(text) {
+        if (ws.readyState === WebSocket.OPEN) {
+            ws.send(text);
+            console.log("Inviato:", text);
+        } else {
+            console.log("La socket non è aperta.");
+        }
+    }
+  </script>
+</body>
+</html>

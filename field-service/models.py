@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Date, Boolean, Double, Computed, ForeignKey, UniqueConstraint, DateTime
+from sqlalchemy import Column, Integer, String, Date, Boolean, Double, Computed, ForeignKey, UniqueConstraint, DateTime, Index
 from database import Base
 
 class Field(Base):
@@ -51,3 +51,7 @@ class SensorReadings(Base):
     value = Column(Double, nullable=False)
     unit = Column(String, nullable=False)
     timestamp = Column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        Index('idx_sensor_readings_field_type_time', 'field_id', 'sensor_type', timestamp.desc()),
+    )

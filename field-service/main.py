@@ -517,3 +517,15 @@ async def get_specific_types_readings(field_name: str, sensor_types: List[str] =
             ordered_grouped_readings[sensor_type] = []
 
     return ordered_grouped_readings
+
+@app.get("/internal/validate-field-owner")
+async def validate_field_owner_internal(field_name: str, db: AsyncSession = Depends(get_db), token: dict = Depends(decode_access_token)):
+    result = await db.execute(select(Field).where(Field.field == field_name))
+    field_object = result.scalars().first()
+    if not field_object:
+        raise HTTPException(status_code=404, detail="Campo non trovato.")
+    
+    if field_object.owner_id != token["sub"]:
+        raise HTTPException(status_code=403, detail="Non hai i permessi per accedere a questo campo.")
+
+    return {"message": "Proprietario del campo validato."}

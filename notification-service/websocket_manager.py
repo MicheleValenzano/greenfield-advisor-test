@@ -9,7 +9,6 @@ class WebSocketManager:
         self.lock = asyncio.Lock()
     
     async def connect(self, websocket: WebSocket, field: str):
-        await websocket.accept()
         async with self.lock:
             if field not in self.connections:
                 self.connections[field] = set()

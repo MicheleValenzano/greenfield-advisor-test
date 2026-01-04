@@ -45,7 +45,11 @@ class RabbitMQNotificationConsumer:
             field = payload["field_id"]
             print("Received reading for field:", field, "payload:", payload)
             if field:
-                await self.websocket_manager.send_notification(field, message=payload)
+                envelope = {
+                    "type": "reading",
+                    "data": payload
+                }
+                await self.websocket_manager.send_notification(field, message=envelope)
     
     async def handle_alert_message(self, message: IncomingMessage):
         async with message.process():
@@ -54,7 +58,11 @@ class RabbitMQNotificationConsumer:
             field = payload["field"]
             print("Received alert for field:", field, "payload:", payload)
             if field:
-                await self.websocket_manager.send_notification(field, message=payload)
+                envelope = {
+                    "type": "alert",
+                    "data": payload
+                }
+                await self.websocket_manager.send_notification(field, message=envelope)
     
     async def close(self):
         if self.connection:

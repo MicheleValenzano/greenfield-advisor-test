@@ -129,3 +129,35 @@ curl -X GET http://localhost:8004/fields/field1/latest-types-readings\?limit=10 
 
 curl -X GET http://localhost:8005/ai-prediction\?field=field1 \
   -H "Authorization: Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOjIsImV4cCI6MTc2NzQ1NDIzOH0.flzBl4MPuEF_p62a4WOaUuIzQGwxHWWqiaolFop-REX8qJ5LGFPZNDIqUX1l6FPv4Q-LYRK8HoktQUKzNovDGc3U9NGaOlTQV5zQeDiekiO0zlZPzXTnroZWcPRp17Yd_xWbaRgJOMarAtu84SB0ba9sw-CMdDYNfEqXm7O30RsUBX1IKFVqsfdnQL_PfyZ_357n6gFVRoF_fwNdcMbHP2JLZRr0AJz8o51gUG5V7UjzG9Ttq8nr3QqQ9n8bmAcUgi5Ftbs7-_eLE42g5mrbSwtR-kR-tzD0nwC85kEp3PHzlJaZmPAvx0aIOIzTaaknXVDD0Riyvkm6HVVj1b3AIeqMqk7nV5mIALHmU0ut2HDii2ZXqE2v3ffPktJzt6U0Hr4ta1eqQ0jLWWFKSn7k8ylN13XdiyhzumnlJcxtRu2kOGU3q0_mM0ragxlU92eWgJ3tJIt-O1VlH-cWgC8w4CAbT_B403yKcyT6mFErQhKbXCQJu0KgrWXU-1OhIxQgxogGOgOsSiHA3broCMeL0P71ixxr9kzDn_lsIsEwHGprtt5gAwh0OiGMB5V-rD-ycA-h-S7jNSf4nS1VHrAcxSyEChPRG0WwBO7UCyfuW6LxB0SLrlcD_ljpICtNOwDZqX7YVFD1NSBfeP3ZSgExwwdZZiCzkJxUqUN5B4a42nQ"
+
+const ws = new WebSocket("ws://localhost:8006/ws/notifications\?field=field1&token=eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOjIsImV4cCI6MTc2NzQ4MTAzNH0.Pj89SKbJ2MKWVLzphLSylB7AZG2KDLD3A5PIN828m2RDIB_OHE2xFMYLAwB-XV0NMYzXsU1NIQS6IzuoSf_9QBY9TBdBlYh0jSXEpf8CN2O81UIiok11WW9iR4e5bP2ecIPkVxjAkbg-wFBdY6l_2n0x_NlVdeZI2K-rvBqXdKlFNAeP6biJCLYiGvQEUFvl46yvpWHVDfDP4z2cNWdKHrQVXgrAefxKkQI-L2bCRftclZgZ217JIF5T8wNt29AIUz6r-YN8ZXMtCI8YKlXDDhm8Uccx2FuLB7AujwwzYftEz0bePh-1CGJTrQ6ulAHQh_kPRPSu0um4HrT8v-aJTuVpZvpcc9Zs9_p1J2X-Q5MH2wUsWkBDWtLcA5aVk5Ao0FAPCqvJ6RYGuV90DnjZM_JwbdRbIqXTdCqsvncCtb7u5Rud1klZPjcqqn2JrOmzflITO4fgRRZ5pLvnxT88Ci1KhpamUfq4VF0gwe6llt9uq_Ifiu7r6eNIUsRs8Kvrwc9Vrba_A3w9M-ARG2roC9Oiqa_xOVygaM6dpJ2xza-Z-EIjwD3P-VOWjdQx2JoIxtwnTKDsxovQKeIo5-Pc8DzxdtcY21zyv1jMkxJtB0V6Nvj3BlmP1WdRk7fkmS_2GjHMjmUYn5WMdlIWfjYbcx5d4gT5XdZvqGpbCM01IwE")
+
+ws.onopen = () => {
+  console.log("WebSocket Connessa");
+}
+
+ws.onmessage = (event) => {
+  console.log("Messaggio ricevuto: ", event.data);
+}
+
+ws.onclose = (event) => {
+  console.log("WebSocket Chiusa");
+  console.log("Codice: ", event.code);
+  console.log("Reason: ", event.reason);
+}
+
+ws.onerror = (error) => {
+  console.log("WebSocket error: ", error);
+}
+
+######## TEST CON IL GATEWAY
+curl -k -X POST "https://localhost:8000/login" \
+  -H "Content-Type: application/json" \
+  -d '{
+  "email": "mario.rossi@example.com",
+  "password": "Ciao123!"
+}'
+
+curl -k -X GET "https://localhost:8000/fields" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOjIsImV4cCI6MTc2NzUyODUxM30.JYlbePR9mIRbCYi-eETNIJWBKS6OCeF7y6ljd-4Eg8bsVTatLiCNckfCf8_yaBGSs_wElq6ImPDuQc_NJkW5h28I8vJJfBWJzq0GjvctR10Vx6vhogTx1ohdu0oB3fgDBuZ8lPSkDZCS_b1ahSchVycsC0Kr1Gfzg6StdOrGm3Uawv8sjK2jRtAPuFxE1VBkrtAf6Y1RbLN1qLFlf6bXywnggYynIW8kDPHq97CCh0Nn3w5hON5XrVh2RG2Cdfr-sabC7EXki879UmMuGxM-xag16NwCe_owORidtkO46lOeP_FEirlpR0Jz3_5S93WXCsBCF6Naip1jtsXrKS2AIlIAH0tBZLoEWB1IstGsu-1AiIs-l9AF6oV93IIHny3RonMvGaMI31H0ESjnaWRmWjJneKkCZrVOTPk_a3VxD0Uuw9zZhxVqGgXb09BH--ExdgbZMamCZ_myOf89mWh26iql6HqNnUhD30QOFFChiKexH0MAATAWC7A9P84TcfDGGS6F2kxwCGmuGpCLBUo67ZZQpLY0gw2NUSpIqR_GKpgJjATazrPF8HdMCTmG2kuShXqMESR18rF7hZc_-R9LErI87GfNwFBL1N1IjlPqAP6ByuGyCHHAwj5dNvaVk846bFzoFtmDCdwfBSqGL2_ZItsr555GfHBh8T3jgKihRmw"

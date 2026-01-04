@@ -43,7 +43,7 @@ def generate_value(key, cfg):
     return round(v, 2)
 
 async def publish_sensor_data(client):
-    await asyncio.sleep(5) # Introduco piccolo un ritardo di 5 secondi per permettere al sistema di avviarsi correttamente
+    await asyncio.sleep(10) # Introduco piccolo un ritardo di 5 secondi per permettere al sistema di avviarsi correttamente
     while True:
         for field_id, sensors in FIELDS.items():
             for sensor_id, metrics in sensors.items():
