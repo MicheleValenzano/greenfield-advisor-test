@@ -322,6 +322,18 @@ services:
       - redis_api_gateway_data:/data
     networks:
       - greenfield-net
+  
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    ports:
+      - "5173:5173"
+    environment:
+      - REACT_APP_API_GATEWAY_URL=https://localhost:8000
+    depends_on:
+      - api-gateway
+    networks:
+      - greenfield-net
 
 volumes:
   authdb_data:

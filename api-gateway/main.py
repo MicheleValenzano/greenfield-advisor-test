@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Request, HTTPException, WebSocket, WebSocketDisconnect, WebSocketException, Depends
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi_limiter import FastAPILimiter
 from fastapi_limiter.depends import RateLimiter
 import websockets
@@ -10,6 +11,15 @@ import asyncio
 from typing import Optional
 
 app = FastAPI(title="API Gateway")
+
+# Configurazione CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Qui vanno specificati gli origin consentiti. Per sviluppo locale è stato Utilizzato "*"
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 async def check_ws_rate_limit(redis_client, key: str, limit: int, window: int):
     """

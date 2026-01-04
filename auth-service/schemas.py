@@ -35,6 +35,7 @@ class UserAdditionalFields(BaseModel):
     def validate_phone_number(cls, value):
         if value and not re.fullmatch(PHONE_PATTERN, value):
             raise ValueError("Il numero di telefono deve essere lungo 10 caratteri e senza prefisso.")
+        return value
     
     @field_validator("birthdate")
     def validate_birthdate(cls, value):
