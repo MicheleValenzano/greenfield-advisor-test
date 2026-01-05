@@ -5,7 +5,7 @@ from fastapi import FastAPI, HTTPException, Depends, status, Request, Query
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from fastapi.security import OAuth2PasswordBearer
-from schemas import FieldCreation, FieldOutput, FieldUpdate, SensorTypeCreation, NewSensorInField, SensorInFieldOutput, SensorReadingOutput
+from schemas import FieldCreation, FieldOutput, FieldUpdate, SensorTypeCreation, NewSensorInField, SensorInFieldOutput, SensorReadingOutput, SensorTypeOutput
 from sqlalchemy import select, func
 from sqlalchemy.orm import aliased
 from collections import defaultdict
@@ -274,11 +274,25 @@ async def delete_sensor_type(sensor_name: str, db: AsyncSession = Depends(get_db
     
     return {"message": "Tipo di sensore eliminato con successo."}
 
-@app.get("/sensor-types", response_model=list[SensorTypeCreation])
+@app.get("/sensor-types", response_model=list[SensorTypeOutput])
 async def get_sensor_types(db: AsyncSession = Depends(get_db), token: dict = Depends(decode_access_token)):
     result = await db.execute(select(SensorType).where(SensorType.owner_id == token["sub"]))
     sensor_types = result.scalars().all()
     return [s for s in sensor_types]
+
+@app.get("/fields/{field_name}/sensors", response_model=list[SensorInFieldOutput])
+async def get_sensors_in_field(field_name: str, db: AsyncSession = Depends(get_db), token: dict = Depends(decode_access_token)):
+    result = await db.execute(select(Field).where(Field.field == field_name))
+    field = result.scalars().first()
+    if not field:
+        raise HTTPException(status_code=404, detail="Campo non trovato.")
+    
+    if field.owner_id != token["sub"]:
+        raise HTTPException(status_code=403, detail="Non hai i permessi per visualizzare i sensori di questo campo.")
+    
+    result = await db.execute(select(FieldSensors).where(FieldSensors.field_name == field_name, FieldSensors.owner_id == token["sub"]))
+    sensors = result.scalars().all()
+    return [s for s in sensors]
 
 @app.post("/fields/{field_name}/sensors", status_code=201, response_model=SensorInFieldOutput)
 async def add_sensor_to_field(field_name: str, sensor: NewSensorInField, db: AsyncSession = Depends(get_db), token: dict = Depends(decode_access_token)):
@@ -303,6 +317,7 @@ async def add_sensor_to_field(field_name: str, sensor: NewSensorInField, db: Asy
     new_sensor = FieldSensors(
         sensor_id=sensor.sensor_id,
         sensor_type=sensor.sensor_type,
+        sensor_type_id=sensor_type.id,  # modificata
         location=sensor.location,
         active=sensor.active,
         field_name=field_name,

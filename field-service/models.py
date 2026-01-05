@@ -21,17 +21,23 @@ class SensorType(Base):
 
     id = Column(Integer, primary_key=True, unique=True, index=True)
     sensor = Column(String, Computed("('sensor' || id)::text", persisted=True), unique=True, index=True, nullable=False)
-    type_name = Column(String, nullable=False, unique=True, index=True)
+    type_name = Column(String, nullable=False, index=True)
     description = Column(String, nullable=True)
     unit = Column(String, nullable=False)
     owner_id = Column(Integer, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint('owner_id', 'type_name', name='uix_type_name_owner_id'),
+    )
 
 class FieldSensors(Base):
     __tablename__ = 'field_sensors'
 
     id = Column(Integer, primary_key=True, unique=True, index=True)
     sensor_id = Column(String, nullable=False)
-    sensor_type = Column(String, ForeignKey("sensor_types.type_name", onupdate="CASCADE", ondelete="RESTRICT"), nullable=False)
+    sensor_type_id = Column(Integer, ForeignKey("sensor_types.id", onupdate="CASCADE", ondelete="RESTRICT"), nullable=False) # modificata
+    # sensor_type = Column(String, ForeignKey("sensor_types.type_name", onupdate="CASCADE", ondelete="RESTRICT"), nullable=False) # modificata in quella di giu
+    sensor_type = Column(String, nullable=False)
     location = Column(String, nullable=False)
     active = Column(Boolean, nullable=False, default=True)
     field_name = Column(String, ForeignKey("fields.field", onupdate="CASCADE", ondelete="CASCADE"), nullable=False)

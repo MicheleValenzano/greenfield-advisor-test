@@ -3,23 +3,25 @@ import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
 import toast, { Toaster } from 'react-hot-toast';
 
-const API_GATEWAY_URL = "https://localhost:8080";
+const API_GATEWAY_URL = "https://localhost:8000";
 
 const SensorTypeManager = () => {
-    const { token, logout } = useAuth();
+    const { token } = useAuth(); // Ho tolto logout
     const [sensorTypes, setSensorTypes] = useState([]);
-    const [typeForm, setTypeForm] = useState({ name: '', description: '', unit: '' });
+    const [typeForm, setTypeForm] = useState({ type_name: '', description: '', unit: '' });
     const [loading, setLoading] = useState(true);
 
-    const getAuthHeader = () => ({ headers: { Authorization: `Bearer ${token}` } });
+    const [fieldErrors, setFieldErrors] = useState({});
 
     const fetchSensorTypes = async () => {
         try {
-            const response = await axios.get(`${API_GATEWAY_URL}/sensors/types`, getAuthHeader());
+            const response = await axios.get(`${API_GATEWAY_URL}/sensor-types`);
             setSensorTypes(response.data);
         } catch (error) {
             console.error("Errore fetch tipi sensori", error);
-            if (error.response?.status === 401) logout();
+            if (!error.response) {
+                toast.error("Errore di connessione. Riprova più tardi.");
+            }
         } finally {
             setLoading(false);
         }
@@ -29,30 +31,60 @@ const SensorTypeManager = () => {
         if (token) fetchSensorTypes();
     }, [token]);
 
+    const clearErrorField = (fieldName) => {
+        setFieldErrors(prevErrors => ({ ...prevErrors, [fieldName]: undefined }));
+    }
+
+    const getInputStryle = (fieldName) => ({
+        borderColor: fieldErrors[fieldName] ? 'var(--danger, #dc3545)' : '',
+    });
+
     const handleAddType = async (e) => {
         e.preventDefault();
-        if (!typeForm.name || !typeForm.description || !typeForm.unit) {
+        setFieldErrors({}); // Resetta errori precedenti
+
+        if (!typeForm.type_name || !typeForm.description || !typeForm.unit) {
             toast.error("Tutti i campi sono obbligatori");
             return;
         }
+
+        const toastId = toast.loading("Aggiunta tipologia in corso...");
+
         try {
-            await axios.post(`${API_GATEWAY_URL}/sensors/types`, typeForm, getAuthHeader());
-            toast.success("Nuova tipologia aggiunta");
-            setTypeForm({ name: '', description: '', unit: '' });
+            await axios.post(`${API_GATEWAY_URL}/sensor-types`, typeForm);
+            toast.success("Nuova tipologia aggiunta", { id: toastId });
+            setTypeForm({ type_name: '', description: '', unit: '' });
             fetchSensorTypes();
         } catch (err) {
-            toast.error(err.response?.data?.detail || "Errore creazione tipo");
+            console.log(err);
+
+            if (!err.response) {
+                toast.error("Errore di connessione. Riprova più tardi.", { id: toastId });
+            } else if (err.response.status === 422 && err.response.data.errors) {
+                toast.dismiss(toastId);
+                const errorsObj = {};
+                err.response.data.errors.forEach(errorItem => {
+                    errorsObj[errorItem.field] = errorItem.message;
+                });
+                setFieldErrors(errorsObj);
+                toast.error("Controlla i campi evidenziati in rosso.");
+            } else {
+                const errorMsg = err.response?.data?.detail || err.response?.data?.message || "Errore aggiunta tipologia";
+                toast.error(errorMsg, { id: toastId });
+            }
         }
     };
 
-    const handleDeleteType = async (id) => {
-        if (!window.confirm("Rimuovere questa tipologia? I sensori esistenti di questo tipo potrebbero smettere di funzionare correttamente.")) return;
+    const handleDeleteType = async (sensor_name) => {
+        if (!window.confirm("Rimuovere questa tipologia? Prima di farlo, devi cancellare tutti i sensori di questo tipo nei diversi campi.")) return;
+        const toastId = toast.loading("Rimozione tipologia in corso...");
         try {
-            await axios.delete(`${API_GATEWAY_URL}/sensors/types/${id}`, getAuthHeader());
-            toast.success("Tipologia rimossa");
+            await axios.delete(`${API_GATEWAY_URL}/sensor-types/${sensor_name}`);
+            toast.success("Tipologia rimossa", { id: toastId });
             fetchSensorTypes();
         } catch (err) {
-            toast.error("Errore eliminazione");
+            const msg = err.response?.data?.detail || err.response?.data?.message || "Impossibile eliminare la tipologia.";
+            toast.error(msg, { id: toastId });
         }
     };
 
@@ -76,10 +108,17 @@ const SensorTypeManager = () => {
                             <label className="text-sm font-bold text-gray-700">Codice/Nome</label>
                             <input 
                                 placeholder="Es. DHT22" 
-                                value={typeForm.name} 
-                                onChange={e => setTypeForm({...typeForm, name: e.target.value.toUpperCase()})} 
-                                className="input-field" 
+                                value={typeForm.type_name} 
+                                onChange={e => { setTypeForm({...typeForm, type_name: e.target.value.toUpperCase()}); clearErrorField('type_name'); }} 
+                                className="input-field"
+                                style={getInputStryle('type_name')}
+                                required
                             />
+                            {fieldErrors.type_name && (
+                                <span style={{ color: '#dc3545', fontSize: '0.85rem', marginTop: '4px', display: 'block' }}>
+                                    {fieldErrors.type_name}
+                                </span>
+                            )}
                             <small className="text-muted">Identificativo univoco (es. DHT22, SOIL_MOISTURE)</small>
                         </div>
                         
@@ -88,9 +127,15 @@ const SensorTypeManager = () => {
                             <input 
                                 placeholder="Es. Sensore Temp/Umidità" 
                                 value={typeForm.description} 
-                                onChange={e => setTypeForm({...typeForm, description: e.target.value})} 
-                                className="input-field" 
+                                onChange={e => { setTypeForm({...typeForm, description: e.target.value}); clearErrorField('description'); }} 
+                                className="input-field"
+                                style={getInputStryle('description')}
                             />
+                            {fieldErrors.description && (
+                                <span style={{ color: '#dc3545', fontSize: '0.85rem', marginTop: '4px', display: 'block' }}>
+                                    {fieldErrors.description}
+                                </span>
+                            )}
                         </div>
 
                         <div>
@@ -98,9 +143,16 @@ const SensorTypeManager = () => {
                             <input 
                                 placeholder="Es. °C, %" 
                                 value={typeForm.unit} 
-                                onChange={e => setTypeForm({...typeForm, unit: e.target.value})} 
+                                onChange={e => { setTypeForm({...typeForm, unit: e.target.value}); clearErrorField('unit'); }} 
                                 className="input-field" 
+                                style={getInputStryle('unit')}
+                                required
                             />
+                            {fieldErrors.unit && (
+                                <span style={{ color: '#dc3545', fontSize: '0.85rem', marginTop: '4px', display: 'block' }}>
+                                    {fieldErrors.unit}
+                                </span>
+                            )}
                         </div>
 
                         <button className="btn btn-primary" style={{ marginTop: '1rem' }}>Salva Tipologia</button>
@@ -116,7 +168,7 @@ const SensorTypeManager = () => {
                             {sensorTypes.length === 0 && <p className="text-muted">Nessuna tipologia definita.</p>}
                             
                             {sensorTypes.map(t => (
-                                <div key={t.id} style={{ 
+                                <div key={t.sensor} style={{ 
                                     background: '#f8fafc', 
                                     border: '1px solid #e2e8f0', 
                                     borderRadius: '8px', 
@@ -124,13 +176,13 @@ const SensorTypeManager = () => {
                                     position: 'relative' 
                                 }}>
                                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>
-                                        <div style={{ fontWeight: 'bold', color: '#1e293b', fontSize: '1.1rem' }}>{t.name}</div>
+                                        <div style={{ fontWeight: 'bold', color: '#1e293b', fontSize: '1.1rem' }}>{t.type_name}</div>
                                         <button 
-                                            onClick={() => handleDeleteType(t.id)} 
+                                            onClick={() => handleDeleteType(t.sensor)} 
                                             style={{ border: 'none', background: 'transparent', color: '#ef4444', cursor: 'pointer', padding: 0 }}
                                             title="Elimina"
                                         >
-                                            🗑️
+                                            ✕
                                         </button>
                                     </div>
                                     

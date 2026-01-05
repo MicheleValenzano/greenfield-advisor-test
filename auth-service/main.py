@@ -223,7 +223,7 @@ async def change_password(password_data: UserPasswordUpdate, token: str = Depend
     if not pwd_context.verify(password_data.current_password, db_user.hashed_password):
         raise HTTPException(status_code=400, detail="La password attuale non è corretta.")
 
-    new_hashed_password = pwd_context.hash(password_data.password)
+    new_hashed_password = pwd_context.hash(password_data.new_password)
     db_user.hashed_password = new_hashed_password
 
     try:

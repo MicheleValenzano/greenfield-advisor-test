@@ -15,7 +15,7 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
 });
 
-const API_GATEWAY_URL = "https://localhost:8080";
+const API_GATEWAY_URL = "https://localhost:8000";
 
 function ChangeView({ center, zoom }) {
   const map = useMap();
@@ -23,20 +23,59 @@ function ChangeView({ center, zoom }) {
   return null;
 }
 
-function MapClickHandler({ setForm, setMarkerPosition }) {
+function MapClickHandler({ setForm, setMarkerPosition, clearError, setMapCenter, setZoom }) {
     useMapEvents({
-        click(e) {
+        async click(e) { // Nota: aggiunta keyword 'async'
             const { lat, lng } = e.latlng;
             setMarkerPosition([lat, lng]);
-            // Quando si clicca sulla mappa, salviamo le coordinate in "location"
-            setForm(prev => ({ ...prev, location: `${lat.toFixed(4)}, ${lng.toFixed(4)}` }));
+
+            setMapCenter([lat, lng]);
+            setZoom(13);
+
+            
+            // 1. Feedback immediato all'utente mentre carichiamo
+            setForm(prev => ({ 
+                ...prev, 
+                location: `Recupero indirizzo... (${lat.toFixed(4)}, ${lng.toFixed(4)})` 
+            }));
+            
+            try {
+                // 2. Chiamata API Reverse Geocoding (usiamo fetch per evitare problemi di Header Auth/CORS)
+                const response = await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`);
+                
+                if (!response.ok) throw new Error("Errore geocoding");
+                
+                const data = await response.json();
+                
+                // 3. Logica di estrazione nome (Priorità: town -> city -> village -> display_name parziale)
+                const addr = data.address || {};
+                const cityName = addr.town || addr.city || addr.village || addr.hamlet || addr.municipality || (data.display_name ? data.display_name.split(',')[0] : "Posizione sconosciuta");
+
+                // 4. Aggiornamento finale del form
+                setForm(prev => ({ 
+                    ...prev, 
+                    location: `${cityName} (${lat.toFixed(4)}, ${lng.toFixed(4)})` 
+                }));
+                
+                clearError('location');
+                toast.success(`Posizione: ${cityName}`);
+
+            } catch (error) {
+                console.error("Errore reverse geocoding:", error);
+                // Fallback: se l'API fallisce, lasciamo solo le coordinate
+                setForm(prev => ({ 
+                    ...prev, 
+                    location: `${lat.toFixed(4)}, ${lng.toFixed(4)}` 
+                }));
+                toast.error("Impossibile recuperare il nome della città");
+            }
         },
     });
     return null;
 }
 
 const FieldManager = () => {
-    const { token, selectedField, setSelectedField, logout } = useAuth();
+    const { token, selectedField, setSelectedField } = useAuth();
     const [fields, setFields] = useState([]);
     const [loading, setLoading] = useState(true);
 
@@ -45,17 +84,26 @@ const FieldManager = () => {
     const [zoom, setZoom] = useState(6);
 
     const [form, setForm] = useState({
-        name: '', start_date: '', cultivation_type: '', size: '', location: '', description: '', is_greenhouse: false
+        name: '', start_date: '', cultivation_type: '', size: '', location: '', description: '', is_indoor: false
     });
+
+    const [fieldErrors, setFieldErrors] = useState({});
 
     // NUOVI STATI PER L'AUTOCOMPLETAMENTO
     const [citySuggestions, setCitySuggestions] = useState([]);
     const [loadingCities, setLoadingCities] = useState(false);
 
     const navigate = useNavigate();
-    const getAuthHeader = () => ({ headers: { Authorization: `Bearer ${token}` } });
 
-    // --- FUNZIONI DI RICERCA CITTÀ ---
+    const clearFieldError = (fieldName) => {
+        setFieldErrors(prevErrors => ({ ...prevErrors, [fieldName]: undefined }));
+    };
+
+    const getInputStyle = (fieldName) => ({
+        borderColor: fieldErrors[fieldName] ? 'var(--danger, #dc3545)' : '',
+    });
+
+    // --- FUNZIONI DI RICERCA CITTÀ --- TODO
     // Funzione per effettuare la ricerca API e popolare i suggerimenti
     const searchLocation = async (query = form.location) => {
         if (!query || query.length < 2) {
@@ -64,7 +112,12 @@ const FieldManager = () => {
         }
         setLoadingCities(true);
         try {
-            const response = await axios.get(`https://geocoding-api.open-meteo.com/v1/search?name=${query}&count=5&language=it&format=json`);
+
+            const cleanAxios = axios.create();
+
+            delete cleanAxios.defaults.headers.common['Authorization'];
+
+            const response = await cleanAxios.get(`https://geocoding-api.open-meteo.com/v1/search?name=${query}&count=5&language=it&format=json`);
 
             if (response.data.results && response.data.results.length > 0) {
                 // Se la ricerca è attiva (query > 2), mostriamo i suggerimenti
@@ -127,61 +180,29 @@ const FieldManager = () => {
         const value = e.target.value;
         setForm({...form, location: value});
         // Ricerca automatica per popolare l'autocomplete (senza debounce per semplicità)
+        clearFieldError('location');
         searchLocation(value);
     };
     // --- FINE LOGICA AUTOCOMPLETAMENTO ---
-
-    const handleAdvisor = async () => {
-        if (!form.location || form.location.trim() === "") {
-            toast.error("Inserisci prima una località o clicca sulla mappa!", { icon: '📍' });
-            return;
-        }
-
-        // Estraiamo la stringa completa, codificata, che prima funzionava
-        const locationToSend = form.location.trim();
-        // Usiamo l'estrazione per il toast, ma inviamo la stringa grezza al backend
-        const displayLocation = locationToSend.split('(')[0].trim();
-
-
-        const loadingToast = toast.loading(`Analisi clima a ${displayLocation}...`);
-        try {
-            // CORREZIONE CHIAVE: Tentiamo con il prefisso API standard: /api/advisor/crops
-            const url = `${API_GATEWAY_URL}/api/advisor/crops?location=${encodeURIComponent(locationToSend)}`;
-
-            const res = await axios.get(url, getAuthHeader());
-            const suggestions = res.data.suggestions;
-            const temp = res.data.temperature;
-            toast.dismiss(loadingToast);
-            toast((t) => (
-                <div>
-                    <p><b>🌡️ {temp}°C in questa zona!</b></p>
-                    <p>Colture consigliate:</p>
-                    <div style={{display:'flex', gap:'5px', flexWrap:'wrap', marginTop:'5px'}}>
-                        {suggestions.map(crop => (
-                            <button key={crop} onClick={() => { setForm(prev => ({...prev, cultivation_type: crop})); toast.dismiss(t.id); toast.success(`Ottima scelta: ${crop}`); }}
-                                className="badge badge-primary" style={{cursor:'pointer', border:'1px solid var(--primary)'}}>
-                                {crop}
-                            </button>
-                        ))}
-                    </div>
-                </div>
-            ), { duration: 8000 });
-        } catch (error) {
-            const status = error.response?.status || error.message;
-            console.error("Advisor API Error:", error.response || error);
-            // Messaggio di debug per ricordare che il problema è il formato o la rotta
-            toast.error(`Impossibile recuperare dati meteo. `, { id: loadingToast });
-        }
-    };
 
     const fetchFields = async () => {
         if (!token) return;
         setLoading(true);
         try {
-            const response = await axios.get(`${API_GATEWAY_URL}/sensors/fields`, getAuthHeader());
+            const response = await axios.get(`${API_GATEWAY_URL}/fields`);
             setFields(response.data);
             if (response.data.length > 0 && !selectedField) setSelectedField(response.data[0]);
-        } catch (error) { if (error.response?.status === 401) { logout(); navigate('/login'); } else toast.error("Errore caricamento campi"); } finally { setLoading(false); }
+        } catch (error) {
+            console.error("Errore fetch campi:", error);
+            if (!error.response) {
+                toast.error("Errore di connessione. Riprova più tardi.");
+            } else {
+                const errorMsg = error.response?.data?.message || error.response?.data?.detail || "Errore nel recupero dei campi.";
+                toast.error(errorMsg);
+            }
+        } finally {
+            setLoading(false);
+        }
     };
 
     useEffect(() => { fetchFields(); }, [token]);
@@ -190,27 +211,57 @@ const FieldManager = () => {
         e.preventDefault();
         const loadingToast = toast.loading("Registrazione campo...");
         try {
-            const response = await axios.post(`${API_GATEWAY_URL}/sensors/fields`, { ...form, size: parseFloat(form.size) }, getAuthHeader());
+
+            const payload = { ...form, size: parseFloat(form.size) };
+
+            const response = await axios.post(`${API_GATEWAY_URL}/fields`, payload);
             toast.success("Campo registrato!", { id: loadingToast });
-            if (response.data.weather_alert) {
-                setTimeout(() => { toast(response.data.weather_alert, { duration: 6000, icon: '🌧️' }); }, 500);
-            }
-            setForm({ name: '', start_date: '', cultivation_type: '', size: '', location: '', description: '', is_greenhouse: false });
+            
+            setForm({ name: '', start_date: '', cultivation_type: '', size: '', location: '', description: '', is_indoor: false });
             setMarkerPosition(null);
             fetchFields();
-        } catch (error) { toast.error("Errore registrazione", { id: loadingToast }); }
+        } catch (error) {
+            console.error("Errore Registrazione Campo:", error);
+
+            if (!error.response) {
+                toast.error("Errore di connessione. Riprova più tardi.", { id: loadingToast });
+                return;
+            }
+
+            if (error.response.status === 422 && error.response.data.errors) {
+                toast.dismiss(loadingToast);
+                const errorsObj = {};
+                error.response.data.errors.forEach(errorItem => {
+                    errorsObj[errorItem.field] = errorItem.message;
+                });
+                setFieldErrors(errorsObj);
+                toast.error("Controlla i campi evidenziati in rosso.", { id: loadingToast });
+            } else {
+                const errorMsg = error.response?.data?.detail || error.response?.data?.message || "Impossibile registrare il campo.";
+                toast.error(errorMsg, { id: loadingToast });
+            }
+        }
     };
 
     const handleDeleteField = async (fieldId, fieldName) => {
-        // NON USARE window.confirm
-        // if (!window.confirm(`Sei sicuro di voler eliminare "${fieldName}"?\nEliminerai anche tutti i dati e i sensori associati.`)) return;
+        
+        if (!window.confirm(`Sei sicuro di voler eliminare "${fieldName}"?\nEliminerai anche tutti i sensori associati.`)) return;
+
         const loadingToast = toast.loading("Eliminazione...");
         try {
-            await axios.delete(`${API_GATEWAY_URL}/sensors/fields/${fieldId}`, getAuthHeader());
+            await axios.delete(`${API_GATEWAY_URL}/fields/${fieldId}`);
             toast.success("Campo eliminato", { id: loadingToast });
-            if (selectedField && (selectedField.id === fieldId || selectedField._id === fieldId)) setSelectedField(null);
+
+            if (selectedField && (selectedField.field === fieldId)) setSelectedField(null);
             fetchFields();
-        } catch (error) { console.error(error); toast.error("Errore eliminazione", { id: loadingToast }); }
+        } catch (error) {
+            if (!error.response) {
+                toast.error("Errore di connessione. Riprova più tardi.", { id: loadingToast });  
+            } else {
+                const errorMsg = error.response?.data?.message || error.response?.data?.detail || "Errore nell'eliminazione del campo.";
+                toast.error(errorMsg, { id: loadingToast });
+            }
+        }
     };
 
     const handleSelectField = (field) => {
@@ -245,26 +296,33 @@ const FieldManager = () => {
                      <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                         <div>
                             <label className="text-sm font-bold text-gray-700">Nome Campo</label>
-                            <input type="text" placeholder="Es. Vigna Nord" value={form.name} onChange={e => setForm({...form, name: e.target.value})} className="input-field" required />
+                            <input type="text" placeholder="Es. Vigna Nord" value={form.name} onChange={e => { setForm({...form, name: e.target.value}); clearFieldError('name'); }} style={getInputStyle('name')} className="input-field" required />
+                            {fieldErrors.name && (
+                            <span style={{ color: '#dc3545', fontSize: '0.85rem', marginTop: '4px', display: 'block' }}>
+                                {fieldErrors.name}
+                            </span>
+                            )}
                         </div>
 
                         {/* CAMPO POSIZIONE CON AUTOCOMPLETAMENTO */}
                         <div style={{position: 'relative'}}>
                             <label className="text-sm font-bold text-gray-700">Posizione (Città, Reg. o Coord.)</label>
-                            <div style={{ display: 'flex', gap: '8px' }}>
-                                <input
-                                    type="text"
-                                    placeholder={loadingCities ? 'Caricamento suggerimenti...' : 'Città o clicca mappa'}
-                                    value={form.location}
-                                    onChange={handleLocationInputChange} // Usa il nuovo handler
-                                    onBlur={() => setTimeout(() => setCitySuggestions([]), 200)} // Chiude i suggerimenti dopo un breve ritardo
-                                    className="input-field"
-                                    style={{borderBottomLeftRadius: citySuggestions.length > 0 ? 0 : '0.5rem', borderBottomRightRadius: citySuggestions.length > 0 ? 0 : '0.5rem'}}
-                                    required
-                                />
-                                <button type="button" onClick={() => searchLocation(form.location)} className="btn btn-secondary" title="Cerca Città">🔍</button>
-                                <button type="button" onClick={handleAdvisor} className="btn" style={{background: '#f59e0b', color: 'white', border:'none'}} title="Suggerimenti Coltura">💡</button>
-                            </div>
+                            
+                            <input
+                                type="text"
+                                placeholder={loadingCities ? 'Caricamento suggerimenti...' : 'Città o clicca mappa'}
+                                value={form.location}
+                                onChange={handleLocationInputChange} // Usa il nuovo handler
+                                onBlur={() => setTimeout(() => setCitySuggestions([]), 200)} // Chiude i suggerimenti dopo un breve ritardo
+                                className="input-field"
+                                style={{width: '100%', borderBottomLeftRadius: citySuggestions.length > 0 ? 0 : '0.5rem', borderBottomRightRadius: citySuggestions.length > 0 ? 0 : '0.5rem', ...getInputStyle('location')}}
+                                required
+                            />
+                            {fieldErrors.location && (
+                                <span style={{ color: '#dc3545', fontSize: '0.85rem', marginTop: '4px', display: 'block' }}>
+                                    {fieldErrors.location}
+                                </span>
+                            )}
 
                             {/* LISTA SUGGERIMENTI */}
                             {citySuggestions.length > 0 && (
@@ -308,22 +366,37 @@ const FieldManager = () => {
 
                         <div>
                             <label className="text-sm font-bold text-gray-700">Tipo Coltura</label>
-                            <input type="text" placeholder="Es. Pomodori, Grano..." value={form.cultivation_type} onChange={e => setForm({...form, cultivation_type: e.target.value})} className="input-field" required />
+                            <input type="text" placeholder="Es. Pomodori, Grano..." value={form.cultivation_type} onChange={e => { setForm({...form, cultivation_type: e.target.value}); clearFieldError('cultivation_type'); }} className="input-field" style={getInputStyle('cultivation_type')} required />
+                            {fieldErrors.cultivation_type && (
+                                <span style={{ color: '#dc3545', fontSize: '0.85rem', marginTop: '4px', display: 'block' }}>
+                                    {fieldErrors.cultivation_type}
+                                </span>
+                            )}
                         </div>
 
                         <div className="split-layout" style={{ gap: '1rem', gridTemplateColumns: '1fr 1fr' }}>
                             <div>
                                 <label className="text-sm font-bold text-gray-700">Data Inizio</label>
-                                <input type="date" value={form.start_date} onChange={e => setForm({...form, start_date: e.target.value})} className="input-field" required />
+                                <input type="date" value={form.start_date} onChange={e => { setForm({...form, start_date: e.target.value}); clearFieldError('start_date'); }} className="input-field" style={getInputStyle('start_date')} />
+                                {fieldErrors.start_date && (
+                                    <span style={{ color: '#dc3545', fontSize: '0.85rem', marginTop: '4px', display: 'block' }}>
+                                        {fieldErrors.start_date}
+                                    </span>
+                                )}
                             </div>
                             <div>
                                 <label className="text-sm font-bold text-gray-700">Ettari (ha)</label>
-                                <input type="number" placeholder="2.5" value={form.size} onChange={e => setForm({...form, size: e.target.value})} className="input-field" step="0.1" required />
+                                <input type="number" placeholder="2.5" value={form.size} onChange={e => { setForm({...form, size: e.target.value}); clearFieldError('size'); }} className="input-field" style={getInputStyle('size')} step="0.1" required />
+                                {fieldErrors.size && (
+                                    <span style={{ color: '#dc3545', fontSize: '0.85rem', marginTop: '4px', display: 'block' }}>
+                                        {fieldErrors.size}
+                                    </span>
+                                )}
                             </div>
                         </div>
 
                         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px', background: '#f0fdf4', borderRadius: '8px' }}>
-                            <input type="checkbox" id="isGreenhouse" checked={form.is_greenhouse} onChange={(e) => setForm({ ...form, is_greenhouse: e.target.checked })} style={{ width: '18px', height: '18px' }} />
+                            <input type="checkbox" id="isGreenhouse" checked={form.is_indoor} onChange={(e) => setForm({ ...form, is_indoor: e.target.checked })} style={{ width: '18px', height: '18px' }} />
                             <label htmlFor="isGreenhouse" style={{ margin: 0, cursor: 'pointer', color: '#15803d', fontWeight:'500' }}>🏠 È una serra / indoor?</label>
                         </div>
 
@@ -338,7 +411,7 @@ const FieldManager = () => {
                             <MapContainer center={mapCenter} zoom={zoom} style={{ height: '100%', width: '100%' }}>
                                 <ChangeView center={mapCenter} zoom={zoom} />
                                 <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-                                <MapClickHandler setForm={setForm} setMarkerPosition={setMarkerPosition} />
+                                <MapClickHandler setForm={setForm} setMarkerPosition={setMarkerPosition} clearError={clearFieldError} setMapCenter={setMapCenter} setZoom={setZoom} />
                                 {markerPosition && <Marker position={markerPosition} />}
                             </MapContainer>
                             <div style={{position:'absolute', bottom:10, left:10, right:10, background:'rgba(255,255,255,0.9)', padding:'8px', borderRadius:'8px', fontSize:'0.75rem', textAlign:'center', color:'#555', zIndex: 1000}}>
@@ -357,7 +430,7 @@ const FieldManager = () => {
                      <div className="bento-grid">
                          {fields.length === 0 ? <div className="glass-card" style={{ gridColumn: '1/-1', textAlign: 'center', padding: '3rem', color: '#6b7280' }}>Nessun campo trovato. Usa il form sopra per crearne uno.</div> :
                          fields.map((field, index) => {
-                             const isSelected = field.name === selectedField?.name;
+                             const isSelected = selectedField && (selectedField.field === field.field);
                              return (
                              <div 
                                 key={index} 
@@ -372,10 +445,10 @@ const FieldManager = () => {
                              >
                                  <div className="flex-between" style={{ marginBottom: '1rem' }}>
                                      <h4 style={{ margin: 0, fontSize: '1.2rem', color: isSelected ? '#047857' : '#1f2937' }}>
-                                        {field.name} {field.is_greenhouse && "🏠"}
+                                        {field.name} {field.is_indoor && "🏠"}
                                      </h4>
                                      <button 
-                                         onClick={(e) => { e.stopPropagation(); handleDeleteField(field.id, field.name); }}
+                                         onClick={(e) => { e.stopPropagation(); handleDeleteField(field.field, field.name); }}
                                          style={{ background: 'transparent', border: 'none', color: '#9ca3af', cursor: 'pointer', padding: '5px' }}
                                          className="hover-danger"
                                          title="Elimina"

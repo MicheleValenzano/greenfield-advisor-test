@@ -1,4 +1,3 @@
-// frontend/src/pages/Dashboard.jsx
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
@@ -6,7 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
-import toast, { Toaster } from 'react-hot-toast'; // <--- IMPORTATO TOAST
+import toast, { Toaster } from 'react-hot-toast';
 
 // Fix icone Leaflet
 delete L.Icon.Default.prototype._getIconUrl;
@@ -16,7 +15,8 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
 });
 
-const API_GATEWAY_URL = "https://localhost:8080";
+const API_GATEWAY_URL = "https://localhost:8000";
+
 const tractorIcon = new L.Icon({
     iconUrl: 'https://cdn-icons-png.flaticon.com/512/2083/2083236.png', 
     iconSize: [35, 35],
@@ -25,41 +25,50 @@ const tractorIcon = new L.Icon({
 });
 
 function Dashboard() {
-    const { token, user, logout, setSelectedField } = useAuth();
+    const { token, user, setSelectedField } = useAuth(); // ho tolto logout dall'oggetto
     const navigate = useNavigate();
     
     const [fields, setFields] = useState([]);
     const [alerts, setAlerts] = useState([]);
-    const [stats, setStats] = useState({ totalHectares: 0, activeSensors: 0, fieldCount: 0 });
+    const [stats, setStats] = useState({ totalHectares: 0, fieldCount: 0 });
     const [loading, setLoading] = useState(true);
 
-    const getAuthHeader = () => ({ headers: { Authorization: `Bearer ${token}` } });
+    // const getAuthHeader = () => ({ headers: { Authorization: `Bearer ${token}` } }); // ora axios lo gestisce globalmente
 
     useEffect(() => {
         const fetchData = async () => {
             try {
-                const fieldsRes = await axios.get(`${API_GATEWAY_URL}/sensors/fields`, getAuthHeader());
+                const fieldsRes = await axios.get(`${API_GATEWAY_URL}/fields`);
                 setFields(fieldsRes.data);
 
-                const alertsRes = await axios.get(`${API_GATEWAY_URL}/sensors/alerts?limit=10`, getAuthHeader());
+                const alertsRes = await axios.get(`${API_GATEWAY_URL}/alerts?limit=10`);
                 setAlerts(alertsRes.data);
 
                 const totalHectares = fieldsRes.data.reduce((acc, curr) => acc + (curr.size || 0), 0);
                 
                 setStats({
                     totalHectares: totalHectares.toFixed(1),
-                    fieldCount: fieldsRes.data.length,
-                    activeSensors: fieldsRes.data.length * 2 
+                    fieldCount: fieldsRes.data.length
                 });
 
             } catch (error) {
                 console.error("Errore dashboard:", error);
-                if (error.response?.status === 401) logout();
+
+                if (!error.response) {
+                    toast.error("Errore di connessione. Riprova più tardi.");
+                } else if (error.response.status != 401) {
+                    const errorMsg = error.response?.data?.detail || error.response?.data?.message || "Errore nel caricamento della dashboard";
+                    toast.error(errorMsg);
+                }
             } finally {
                 setLoading(false);
             }
         };
-        fetchData();
+
+        if (token) {
+            fetchData();
+        }
+
     }, [token]);
 
     // --- NUOVA FUNZIONE: CANCELLA TUTTI GLI AVVISI ---
@@ -69,13 +78,41 @@ function Dashboard() {
 
         try {
             // Chiamata DELETE senza parametri per cancellarli tutti (globalmente per l'utente)
-            await axios.delete(`${API_GATEWAY_URL}/sensors/alerts`, getAuthHeader());
-            
+            await axios.post(`${API_GATEWAY_URL}/archive-alerts`);
             toast.success("Avvisi archiviati con successo!");
             setAlerts([]); // Pulisce la vista immediatamente
         } catch (err) {
             console.error(err);
             toast.error("Errore durante l'archiviazione");
+        }
+    };
+
+    const getFieldName = (fieldId) => {
+        const foundField = fields.find(f => f.field === fieldId);
+        return foundField ? foundField.name : "field eliminata";
+    }
+
+    const formatAlertDate = (timestamp) => {
+        if (!timestamp) return "";
+        const date = new Date(timestamp);
+        const today = new Date();
+
+        // Controlliamo se è lo stesso giorno, mese e anno
+        const isToday = date.getDate() === today.getDate() &&
+                        date.getMonth() === today.getMonth() &&
+                        date.getFullYear() === today.getFullYear();
+
+        if (isToday) {
+            // Solo Ora:Minuti:Secondi
+            return date.toLocaleTimeString([], { 
+                hour: '2-digit', minute: '2-digit', second: '2-digit' 
+            });
+        } else {
+            // Data Completa + Ora
+            return date.toLocaleString([], {
+                day: '2-digit', month: '2-digit', year: 'numeric',
+                hour: '2-digit', minute: '2-digit', second: '2-digit'
+            });
         }
     };
 
@@ -106,7 +143,6 @@ function Dashboard() {
                 }}></div>
             </div>
 
-            {/* KPI CARDS (BENTO GRID) */}
             <div className="bento-grid">
                 <div className="glass-card">
                     <div className="text-muted text-sm font-bold uppercase">Estensione</div>
@@ -121,7 +157,7 @@ function Dashboard() {
                     <div style={{ fontSize: '2.5rem', fontWeight: 800, color: alerts.length > 0 ? 'var(--accent)' : 'var(--primary)' }}>
                         {alerts.length > 0 ? 'ATTENZIONE' : 'OTTIMO'}
                     </div>
-                    <div className="mt-2 text-sm text-muted">{alerts.length} notifiche attive</div>
+                    <div className="mt-2 text-sm text-muted">{alerts.length} ultime notifiche</div>
                 </div>
 
                 <div className="glass-card" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
@@ -137,7 +173,6 @@ function Dashboard() {
                 </div>
             </div>
 
-            {/* SPLIT LAYOUT: MAP & NOTIFICATIONS */}
             <div className="split-layout">
                 
                 {/* MAPPA */}
@@ -150,16 +185,9 @@ function Dashboard() {
                         <MapContainer center={[41.9028, 12.4964]} zoom={6} style={{ height: '100%', width: '100%' }}>
                             <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
                             {fields.map(field => {
-                                if (!field.location || !field.location.includes(',')) return null;
-                                let lat, lng;
-                                try {
-                                    const parts = field.location.includes('(') ? field.location.split('(')[1].replace(')', '').split(',') : field.location.split(',');
-                                    lat = parseFloat(parts[0]); lng = parseFloat(parts[1]);
-                                } catch (e) { return null; }
-                                if (isNaN(lat) || isNaN(lng)) return null;
-
+                                if (!field.latitude || !field.longitude) return null;
                                 return (
-                                    <Marker key={field.id} position={[lat, lng]} icon={tractorIcon}>
+                                    <Marker key={field.id} position={[field.latitude, field.longitude]} icon={tractorIcon}>
                                         <Popup>
                                             <strong>{field.name}</strong><br/>
                                             {field.cultivation_type}<br/>
@@ -178,7 +206,7 @@ function Dashboard() {
                     </div>
                 </div>
 
-                {/* NOTIFICHE (AGGIORNATO CON TASTO CANCELLA) */}
+                {/* NOTIFICHE */}
                 <div className="glass-card">
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
                         <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -216,13 +244,13 @@ function Dashboard() {
                                         padding: '1rem',
                                         marginBottom: '1rem',
                                         borderRadius: '12px',
-                                        background: alert.type === 'CRITICAL' ? '#fef2f2' : 'rgba(255, 152, 0, 0.1)',
-                                        borderLeft: `4px solid ${alert.type === 'CRITICAL' ? '#ef4444' : 'var(--accent)'}`
+                                        background: '#fef2f2',
+                                        borderLeft: '4px solid #ef4444'
                                     }}>
-                                        <div style={{ fontWeight: 'bold', color: alert.type === 'CRITICAL' ? '#ef4444' : '#c2410c', display: 'flex', justifyContent: 'space-between' }}>
-                                            {alert.type}
+                                        <div style={{ fontWeight: 'bold', color: '#ef4444', display: 'flex', justifyContent: 'space-between' }}>
+                                            {getFieldName(alert.field)} - {alert.sensor_type.toUpperCase()}
                                             <span style={{ fontSize: '0.75rem', fontWeight: 'normal', opacity: 0.8, color: '#666' }}>
-                                                {new Date(alert.timestamp * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                {formatAlertDate(alert.timestamp)}
                                             </span>
                                         </div>
                                         <div style={{ fontSize: '0.9rem', marginTop: '0.5rem', color: '#333' }}>{alert.message}</div>

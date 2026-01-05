@@ -92,6 +92,15 @@ export const AuthProvider = ({ children }) => {
     }
   }, [token]);
 
+  // ========= GESTIONE CAMPO SELEZIONATO =========
+  useEffect(() => {
+    if (selectedField) {
+      localStorage.setItem("selectedField", JSON.stringify(selectedField));
+    } else {
+      localStorage.removeItem("selectedField");
+    }
+  }, [selectedField]);
+
   // ========= LOGIN =========
   const login = (jwtToken, userData = null) => {
     setLoading(true); // Inizio login

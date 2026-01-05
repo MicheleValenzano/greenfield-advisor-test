@@ -60,7 +60,7 @@ function Register() {
       }
 
       if (err.response.status === 422 && err.response.data.errors) {
-        toast.dismiss(loadingToast); // Chiusura del toast di caricamento
+        toast.error("Controlla i campi evidenziati in rosso.", { id: loadingToast });
 
         const errorsObj = {};
         err.response.data.errors.forEach(errorItem => {

@@ -81,7 +81,7 @@ export default function Profile() {
       console.error(err);
 
       if (err.response && err.response.status === 422 && err.response.data.errors) {
-        toast.dismiss(toastId); // Chiusura del toast di caricamento
+        toast.error("Controlla i campi evidenziati in rosso.", { id: toastId });
 
         const errorsObj = {};
         err.response.data.errors.forEach(errorItem => {
@@ -122,7 +122,7 @@ export default function Profile() {
     } catch (err) {
       console.error(err);
       if (err.response && err.response.status === 422 && err.response.data.errors) {
-        toast.dismiss(toastId); // Chiusura del toast di caricamento
+        toast.error("Controlla i campi evidenziati in rosso.", { id: toastId });
 
         const errorsObj = {};
         err.response.data.errors.forEach(errorItem => {

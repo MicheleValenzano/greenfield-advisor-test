@@ -310,7 +310,7 @@ async def ai_prediction(field: str, chain: ChainHandler = Depends(get_ml_chain_r
     if not model:
         raise HTTPException(503, detail="Modello di Machine Learning non disponibile.")
     
-    target_sensors = ["temperature", "humidity", "soil_moisture"]
+    target_sensors = ["temperature", "humidity", "soil_moisture"] # Poi metterli in uppercase magari
 
     context = MLAnalysisChainContext(
         payload={

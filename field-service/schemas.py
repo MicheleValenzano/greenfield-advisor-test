@@ -100,6 +100,15 @@ class SensorTypeCreation(BaseModel):
     class Config:
         orm_mode = True
 
+class SensorTypeOutput(BaseModel):
+    sensor: str = Field(..., example="sensor1234", description="Identificativo univoco della tipologia di sensore")
+    type_name: str = Field(..., example="temperatura", description="Tipo di sensore, ad esempio 'temperatura', 'umidità', ecc...")
+    description: Optional[str] = Field(None, example="Sensore per misurare la temperatura dell'aria", description="Descrizione del sensore")
+    unit: str = Field(..., example="°C", description="Unità di misura del sensore, ad esempio '°C', '%', ecc...")
+
+    class Config:
+        orm_mode = True
+
 class NewSensorInField(BaseModel):
     sensor_id: str = Field(..., example="sensor1234", description="Identificativo univoco del sensore")
     sensor_type: str = Field(..., example="temperatura", description="Tipo di sensore, ad esempio 'temperatura', 'umidità', ecc...")
