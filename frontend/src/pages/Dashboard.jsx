@@ -187,7 +187,7 @@ function Dashboard() {
                             {fields.map(field => {
                                 if (!field.latitude || !field.longitude) return null;
                                 return (
-                                    <Marker key={field.id} position={[field.latitude, field.longitude]} icon={tractorIcon}>
+                                    <Marker key={field.field} position={[field.latitude, field.longitude]} icon={tractorIcon}>
                                         <Popup>
                                             <strong>{field.name}</strong><br/>
                                             {field.cultivation_type}<br/>

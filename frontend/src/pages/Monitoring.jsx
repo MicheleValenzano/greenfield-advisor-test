@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useRef } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
@@ -6,6 +6,7 @@ import toast, { Toaster } from 'react-hot-toast';
 import { useAuth } from '../context/AuthContext';
 
 const API_GATEWAY_URL = "https://localhost:8000";
+const WS_URL = "wss://localhost:8000/ws/notifications";
 
 // Genera un colore univoco per il grafico
 const stringToColor = (str) => {
@@ -17,72 +18,83 @@ const stringToColor = (str) => {
     return '#' + '00000'.substring(0, 6 - c.length) + c;
 };
 
-// Vedere se mi serve
-const getDayName = (dateStr) => {
-    const date = new Date(dateStr);
-    return date.toLocaleDateString('it-IT', { weekday: 'short' }); // Es: Lun, Mar
-};
-
-const formatAlertDate = (timestamp) => {
-    if (!timestamp) return "";
-    // Gestione timestamp secondi vs millisecondi
-    const ms = timestamp > 1e10 ? timestamp : timestamp * 1000;
-    const date = new Date(ms);
-    const today = new Date();
-
-    const isToday = date.getDate() === today.getDate() &&
-                    date.getMonth() === today.getMonth() &&
-                    date.getFullYear() === today.getFullYear();
-
-    if (isToday) {
-        return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-    } else {
-        return date.toLocaleString([], {
-            day: '2-digit', month: '2-digit', year: 'numeric',
-            hour: '2-digit', minute: '2-digit', second: '2-digit'
-        });
-    }
-};
-
 function Monitoring() {
     const { token, selectedField } = useAuth();
     const navigate = useNavigate();
 
+    // Riferimento WebSocket
+    const ws = useRef(null);
+    // Toast id di connessione
+    const errorToastId = useRef(null);
+
+    // STATI DATI
     const [readings, setReadings] = useState([]);
     const [weather, setWeather] = useState(null);
-    const [forecast, setForecast] = useState([]); // Stato per le previsioni
+    const [forecast, setForecast] = useState([]); 
     const [authorizedSensors, setAuthorizedSensors] = useState([]);
     const [alerts, setAlerts] = useState([]);
     const [rules, setRules] = useState([]);
     const [sensorTypes, setSensorTypes] = useState([]);
     
+    // STATI FORM (Inizializzati vuoti, verranno popolati dall'useEffect)
     const [newSensor, setNewSensor] = useState({ sensor_id: '', location: '', sensor_type: '' });
     const [newRule, setNewRule] = useState({ sensor_type: '', condition: '>', threshold: '', message: '' });
     const [loading, setLoading] = useState(true);
 
+    // STATO PER GLI ERRORI DI VALIDAZIONE
+    const [fieldErrors, setFieldErrors] = useState({});
+
+    // NAVIGAZIONE
     useEffect(() => { 
         if (!selectedField) navigate('/fields'); 
     }, [selectedField, navigate]);
-
+    
+    // --- AUTO-SELEZIONE TIPO SENSORE E REGOLA ---
+    // Appena caricano i sensorTypes, impostiamo il valore di default per entrambi i form
     useEffect(() => {
-        if (sensorTypes.length > 0 && newRule.sensor_type === '') {
-            setNewRule(prev => ({ ...prev, sensor_type: sensorTypes[0].type_name }) );
+        if (sensorTypes.length > 0) {
+            const defaultType = sensorTypes[0].type_name;
+            
+            // Per le Regole
+            if (newRule.sensor_type === '') {
+                setNewRule(prev => ({ ...prev, sensor_type: defaultType }));
+            }
+            // Per i Sensori (Nuova modifica)
+            if (newSensor.sensor_type === '') {
+                setNewSensor(prev => ({ ...prev, sensor_type: defaultType }));
+            }
         }
     }, [sensorTypes]);
-    
-    const formatXAxis = (tickItem) => {
-        if (!tickItem) return '';
-        return new Date(tickItem).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    const clearErrorField = (fieldName) => {
+        setFieldErrors(prevErrors => ({ ...prevErrors, [fieldName]: undefined }));        
     };
 
+    const getInputStyle = (fieldName) => ({
+        borderColor: fieldErrors[fieldName] ? 'var(--danger, #dc3545)' : '',
+    });
+
+    const handleApiError = (err, toastId) => {
+        if (err.response && err.response.status === 422 && err.response.data.errors) {
+            toast.error("Controlla i campi evidenziati in rosso.", { id: toastId });
+            const objErrors = {};
+            err.response.data.errors.forEach(errorItem => {
+                objErrors[errorItem.field] = errorItem.message;
+            });
+            setFieldErrors(objErrors);
+        } else {
+            const errorMsg = err.response?.data?.message || err.response?.data?.detail || "Errore durante la richiesta";
+            toast.error(errorMsg, { id: toastId });
+        }
+    }
+
+    // FETCH DATI
     const fetchData = async () => {
         if (!selectedField) { setLoading(false); return; }
         const field_name = selectedField.field
         if (!field_name) { setLoading(false); return; }
 
         try {
-            // const fieldQuery = `?field_id=${fieldId}`;
-
             const results = await Promise.allSettled([
                 axios.get(`${API_GATEWAY_URL}/fields/${field_name}/weather`),
                 axios.get(`${API_GATEWAY_URL}/fields/${field_name}/readings?limit=50`),
@@ -91,14 +103,6 @@ function Monitoring() {
                 axios.get(`${API_GATEWAY_URL}/alerts/${field_name}?limit=10`),
                 axios.get(`${API_GATEWAY_URL}/sensor-types`)
             ]);
-
-            console.log("Meteo: ", results[0].value.data.current_weather);
-            console.log("Previsioni: ", results[0].value.data.forecast);
-            console.log("Letture: ", results[1].value.data);
-            console.log("Sensori nella field:", results[2].value.data);
-            console.log("Regole:", results[3].value.data);
-            console.log("Allarmi:", results[4].value.data);
-            console.log("Tipi Sensori:", results[5].value.data);
 
             if (results[0].status === 'fulfilled') {
                 setWeather(results[0].value.data.current_weather);
@@ -117,38 +121,142 @@ function Monitoring() {
         }
     };
 
-    // da sostituire con WS
     useEffect(() => {
         fetchData();
     }, [selectedField]);
 
-    // HANDLERS
+    // Gestione WebSocket per notifiche in tempo reale
+    useEffect(() => {
+        if (!token || !selectedField) return; // Se mancano i dati necessari, non si prova la connessione
+
+        let successToastId = null;
+
+        const connectWebSocket = () => {
+            const field_name = selectedField.field;
+
+            if (ws.current) {
+                ws.current.onclose = null; // Evita la riconnessione al momento della chiusura manuale
+                ws.current.close();
+            }
+
+            errorToastId.current = null;
+
+            const socket = new WebSocket(`${WS_URL}?token=${token}&field=${field_name}`);
+            ws.current = socket;
+
+            // All'apertura della socket
+            socket.onopen = () => {
+                if (errorToastId.current) {
+                    toast.dismiss(errorToastId.current);
+                    errorToastId.current = null;
+                }
+                successToastId = toast.success(`Connesso al sistema di notifica in tempo reale del campo ${selectedField.name}.`);
+            }
+
+            // Quando arriva un messaggio
+            socket.onmessage = (event) => {
+                try {
+                    console.log("Messaggio WebSocket ricevuto:", event.data);
+                    const response = JSON.parse(event.data);
+                    const { type, data } = response;
+
+                    // Gestione alert nuove letture
+                    if (type === 'reading') {
+                        setReadings(prevReadings => {
+                            const updatedReadings = [data, ...prevReadings];
+
+                            if (updatedReadings.length > 50) {
+                                return updatedReadings.slice(0, 50);
+                            }
+                            return updatedReadings;
+                        });
+                    }
+                    
+                    // Gestione nuovi allarmi
+                    if (type === 'alert') {
+                        setAlerts(prevAlerts => {
+                            const uniqueId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+                            const newAlert = {...data, id: uniqueId }; // Generazione id causale
+                            return [newAlert, ...prevAlerts];
+                        })
+
+                        toast.error(`⚠️ Nuovo allarme:${data.message}\n(Tipo sensore: ${data.sensor_type})`, { duration: 4000 });
+                    }
+
+                } catch (err) {
+                    console.error("Errore parsing messaggio WebSocket:", err);
+                }
+            }
+
+            const handleConnectionLoss = () => {
+                if (errorToastId.current) return;
+                errorToastId.current = toast.error(<div onClick={() => window.location.reload()} style={{ cursor: 'pointer' }}><b>Connessione alle notifiche persa.</b><br/>Ricaricare la pagina</div>, { duration: Infinity, id: 'ws-error-toast' });
+            }
+
+            socket.onclose = (event) => {
+                console.log(`Connessione WebSocket chiusa pulitamente, codice=${event.code} motivo=${event.reason}`);
+
+                if (successToastId) {
+                    toast.dismiss(successToastId);
+                    successToastId = null;
+                }
+
+                handleConnectionLoss();
+            }
+
+            socket.onerror = (err) => {
+                console.error("Errore WebSocket:", err);
+            }
+        };
+
+        connectWebSocket();
+
+        return () => {
+            // Chiusura della connessione WebSocket
+            if (ws.current) {
+                ws.current.onclose = null; // Evita la riconnessione al momento della chiusura manuale
+                ws.current.close();
+            }
+
+            if (successToastId) {
+                toast.dismiss(successToastId);
+            }
+        }
+
+    }, [selectedField, token]);
+
+    // --- HANDLERS ---
+
     const handleRegisterSensor = async (e) => {
         e.preventDefault();
+        setFieldErrors({}); // Resetta errori precedenti
+
         const field_name = selectedField?.field;
+        // Controllo di sicurezza, anche se è preselezionato
         if (!newSensor.sensor_type) return toast.error("Seleziona tipo");
+        
         try {
             await axios.post(`${API_GATEWAY_URL}/fields/${field_name}/sensors`, { ...newSensor, field_name: field_name, active: true });
             toast.success("Sensore aggiunto");
-            setNewSensor({ sensor_id: '', location: '', sensor_type: '' });
+            
+            // RESET: Manteniamo il primo tipo disponibile
+            const defaultType = sensorTypes.length > 0 ? sensorTypes[0].type_name : '';
+            setNewSensor({ sensor_id: '', location: '', sensor_type: defaultType });
+            
             fetchData();
         } catch (err) {
-            // logica di validazione come gli altri file
-            toast.error(err.response?.data?.detail || "Errore");
+            handleApiError(err);
         }
     };
 
-    // --- NUOVA FUNZIONE: CANCELLA ALLARMI ---
     const handleClearAlerts = async () => {
         const fieldId = selectedField?.field;
         if (!fieldId || alerts.length === 0) return;
-        
         if (!confirm("Archiviare tutti gli allarmi visualizzati?")) return;
-
         try {
             await axios.post(`${API_GATEWAY_URL}/archive-alerts/${fieldId}`);
             toast.success("Allarmi archiviati");
-            setAlerts([]); // Pulisce subito la vista
+            setAlerts([]); 
         } catch (err) {
             console.error(err);
             toast.error("Errore durante l'archiviazione");
@@ -170,16 +278,22 @@ function Monitoring() {
 
     const handleAddRule = async (e) => {
         e.preventDefault();
+        setFieldErrors({}); // Resetta errori precedenti
+
         const field_name = selectedField?.field;
+        if (!newRule.sensor_type) return toast.error("Tipo sensore mancante");
+
         try {
             await axios.post(`${API_GATEWAY_URL}/rules`, { ...newRule, threshold: parseFloat(newRule.threshold), field: field_name });
             toast.success("Regola creata");
-            setNewRule({ sensor_type: sensorTypes.length > 0 ? sensorTypes[0].type_name : '', condition: '>', threshold: '', message: '' });
+            
+            // RESET: Manteniamo il primo tipo disponibile
+            const defaultType = sensorTypes.length > 0 ? sensorTypes[0].type_name : '';
+            setNewRule({ sensor_type: defaultType, condition: '>', threshold: '', message: '' });
+            
             fetchData();
         } catch(err){
-            // gestione errori di validazione come gli altri file
-            console.log(err);
-            toast.error("Errore regola");
+            handleApiError(err);
         }
     };
 
@@ -193,10 +307,17 @@ function Monitoring() {
         }
     };
 
+    // --- HELPERS VISIVI ---
+
     const truncateText = (text, limit) => {
         if (!text) return '';
         return text.length > limit ? text.substring(0, limit) + '...' : text;
-    }
+    };
+
+    const formatXAxis = (tickItem) => {
+        if (!tickItem) return '';
+        return new Date(tickItem).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    };
 
     const formatTooltipLabel = (label) => {
         if (!label) return '';
@@ -204,50 +325,39 @@ function Monitoring() {
             day: '2-digit', month: '2-digit', year: 'numeric',
             hour: '2-digit', minute: '2-digit', second: '2-digit'
         });
-    }
+    };
+
+    // --- ELABORAZIONE DATI GRAFICO ---
 
     const { chartData, activeCurves } = useMemo(() => {
         if (!readings || readings.length === 0) return { chartData: [], activeCurves: [] };
+        const curvesSet = new Map();
 
-        const curvesSet = new Map(); // Usiamo una Map per tenere traccia delle curve uniche trovate
-
-        // 1. Raggruppa per timestamp
         const grouped = readings.reduce((acc, curr) => {
-            // Arrotonda al secondo per allineare i dati
             const dateObj = new Date(curr.timestamp);
             dateObj.setMilliseconds(0);
-            // volendo posso fare anche dateObj.setSeconds(0);
             const timeKey = dateObj.toISOString();
 
-            if (!acc[timeKey]) {
-                acc[timeKey] = { timestamp: timeKey };
-            }
+            if (!acc[timeKey]) acc[timeKey] = { timestamp: timeKey };
 
-            // CREIAMO UNA CHIAVE UNICA: tipo + id sensore
-            // Es: temperature_sensor01
             const typeKey = curr.sensor_type.toLowerCase().replace(/ /g, "_");
             const uniqueKey = `${typeKey}_${curr.sensor_id}`;
 
-            // Salviamo il valore
             acc[timeKey][uniqueKey] = curr.value;
 
-            // Salviamo i dettagli di questa curva se non l'abbiamo già fatto
             if (!curvesSet.has(uniqueKey)) {
                 curvesSet.set(uniqueKey, {
                     dataKey: uniqueKey,
                     sensorId: curr.sensor_id,
                     type: curr.sensor_type,
                     unit: curr.unit,
-                    name: `${curr.sensor_type} (${curr.sensor_id})` // Nome per la legenda
+                    name: `${curr.sensor_type} (${curr.sensor_id})` 
                 });
             }
-
             return acc;
         }, {});
 
-        // 2. Ordina cronologicamente
         const data = Object.values(grouped).sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-
         return { chartData: data, activeCurves: Array.from(curvesSet.values()) };
 
     }, [readings]);
@@ -273,9 +383,7 @@ function Monitoring() {
                             <ResponsiveContainer width="100%" height={300}>
                                 <AreaChart data={chartData}>
                                     <defs>
-                                        {/* Generiamo gradienti per ogni curva specifica */}
                                         {activeCurves.map(curve => {
-                                            // Generiamo un colore basato sull'ID del sensore o sulla chiave unica
                                             const color = stringToColor(curve.dataKey); 
                                             return (
                                                 <linearGradient key={curve.dataKey} id={`grad${curve.dataKey}`} x1="0" y1="0" x2="0" y2="1">
@@ -289,9 +397,12 @@ function Monitoring() {
                                     <CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.3} />
                                     <XAxis dataKey="timestamp" tickFormatter={formatXAxis} axisLine={false} tickLine={false} style={{fontSize:'0.75rem'}} />
                                     <YAxis axisLine={false} tickLine={false} />
-                                    <Tooltip contentStyle={{ borderRadius: '12px' }} labelFormatter={formatTooltipLabel} />
+                                    <Tooltip 
+                                        contentStyle={{ borderRadius: '12px' }} 
+                                        labelFormatter={formatTooltipLabel} 
+                                        formatter={(value, name) => [value, name]} 
+                                    />
                                     
-                                    {/* Cicliamo sulle curve attive calcolate nel useMemo */}
                                     {activeCurves.map(curve => {
                                         const color = stringToColor(curve.dataKey);
                                         return (
@@ -299,7 +410,7 @@ function Monitoring() {
                                                 key={curve.dataKey}
                                                 type="monotone" 
                                                 dataKey={curve.dataKey} 
-                                                name={curve.name} // Es: temperature (sensor01)
+                                                name={curve.name}
                                                 unit={curve.unit}
                                                 stroke={color} 
                                                 fill={`url(#grad${curve.dataKey})`} 
@@ -328,44 +439,23 @@ function Monitoring() {
                                     </thead>
                                     <tbody>
                                         {[...readings]
-                                            // Ordina dal più recente al più vecchio
                                             .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
                                             .map((r, i) => (
                                             <tr key={i} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                                                
-                                                {/* COLONNA 1: ORARIO (gg/mm/aaaa hh:mm:ss) */}
                                                 <td style={{ padding: '10px', fontSize: '0.85rem', color: '#6b7280', whiteSpace: 'nowrap' }}>
                                                     {new Date(r.timestamp).toLocaleString('it-IT', {
                                                         day: '2-digit', month: '2-digit', year: 'numeric',
                                                         hour: '2-digit', minute: '2-digit', second: '2-digit'
                                                     })}
                                                 </td>
-
-                                                {/* COLONNA 2: ID SENSORE */}
-                                                <td style={{ padding: '10px', fontWeight: '600', color: '#374151' }}>
-                                                    {r.sensor_id}
-                                                </td>
-
-                                                {/* COLONNA 3: TIPO (formattato per togliere underscore) */}
-                                                <td style={{ padding: '10px', textTransform: 'capitalize', color: '#4b5563' }}>
-                                                    {r.sensor_type.replace(/_/g, ' ')}
-                                                </td>
-
-                                                {/* COLONNA 4: VALORE + UNITÀ */}
+                                                <td style={{ padding: '10px', fontWeight: '600', color: '#374151' }}>{r.sensor_id}</td>
+                                                <td style={{ padding: '10px', textTransform: 'capitalize', color: '#4b5563' }}>{r.sensor_type.replace(/_/g, ' ')}</td>
                                                 <td style={{ padding: '10px' }}>
                                                     <span style={{
-                                                        background: '#eff6ff', 
-                                                        color: '#1d4ed8', 
-                                                        padding: '4px 10px', 
-                                                        borderRadius: '20px', 
-                                                        fontWeight: '600',
-                                                        fontSize: '0.9rem',
-                                                        display: 'inline-block'
+                                                        background: '#eff6ff', color: '#1d4ed8', 
+                                                        padding: '4px 10px', borderRadius: '20px', fontWeight: '600', fontSize: '0.9rem', display: 'inline-block'
                                                     }}>
-                                                        {r.value} 
-                                                        <span style={{ fontSize: '0.8em', marginLeft: '3px', opacity: 0.8 }}>
-                                                            {r.unit}
-                                                        </span>
+                                                        {r.value} <span style={{ fontSize: '0.8em', marginLeft: '3px', opacity: 0.8 }}>{r.unit}</span>
                                                     </span>
                                                 </td>
                                             </tr>
@@ -376,14 +466,15 @@ function Monitoring() {
                         </div>
                     </div>
 
+                    {/* COLONNA DESTRA */}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+                        
                         {/* WIDGET METEO & PREVISIONI */}
                         <div className="glass-card" style={{ textAlign: 'center', background: 'linear-gradient(to bottom, #eff6ff, #fff)' }}>
                             <h3 style={{ margin: 0, color: '#1d4ed8' }}>Meteo Attuale</h3>
                             
                             {weather ? (
                                 <div style={{ marginTop: '10px' }}>
-                                    {/* SEZIONE PRINCIPALE: ICONA E TEMPERATURA */}
                                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '15px' }}>
                                         <img 
                                             src={`https://openweathermap.org/img/wn/${weather.icon}@2x.png`} 
@@ -391,67 +482,35 @@ function Monitoring() {
                                             style={{ width: '80px', height: '80px', filter: 'drop-shadow(0 4px 6px rgba(0,0,0,0.1))' }}
                                         />
                                         <div style={{ textAlign: 'left' }}>
-                                            <div style={{ fontSize: '2.5rem', fontWeight: 800, color: '#1e3a8a', lineHeight: 1 }}>
-                                                {Math.round(weather.temperature)}°
-                                            </div>
-                                            <div style={{ fontSize: '0.9rem', color: '#6b7280', textTransform: 'capitalize' }}>
-                                                {weather.description}
-                                            </div>
+                                            <div style={{ fontSize: '2.5rem', fontWeight: 800, color: '#1e3a8a', lineHeight: 1 }}>{Math.round(weather.temperature)}°</div>
+                                            <div style={{ fontSize: '0.9rem', color: '#6b7280', textTransform: 'capitalize' }}>{weather.description}</div>
                                         </div>
                                     </div>
-
-                                    {/* DETTAGLI LOCALITÀ E MIN/MAX ATTUALI */}
                                     <div style={{ color: '#6b7280', fontSize: '0.9rem', marginBottom: '1.5rem', marginTop: '0.5rem' }}>
                                         <div style={{ marginBottom: '8px' }}>📍 <strong>{weather.city}</strong></div>
-                                        
                                         <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', fontSize: '0.9rem', color: '#374151' }}>
                                             <div><strong>max:</strong> {Math.round(weather.max_temperature)}°</div>
                                             <div><strong>min:</strong> {Math.round(weather.min_temperature)}°</div>
                                         </div>
                                     </div>
-
-                                    {/* PREVISIONI PROSSIMI GIORNI */}
                                     {forecast.length > 0 && (
-                                        <div style={{ 
-                                            display: 'flex', 
-                                            justifyContent: 'space-between', 
-                                            marginTop: '1rem', 
-                                            paddingTop: '1rem',
-                                            borderTop: '1px solid #dbeafe',
-                                            gap: '5px'
-                                        }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid #dbeafe', gap: '5px' }}>
                                             {forecast.slice(1).map((day, idx) => (
                                                 <div key={idx} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flex: 1 }}>
-                                                    {/* Data */}
                                                     <span style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#64748b', whiteSpace: 'nowrap' }}>
                                                         {day.date.split(' ')[0]} <span style={{fontSize:'0.65rem', fontWeight:'normal'}}>{day.date.split(' ')[1]}</span>
                                                     </span>
-                                                    
-                                                    {/* Icona (FORZATA A GIORNO) */}
-                                                    <img 
-                                                        // QUI LA MODIFICA: .replace('n', 'd') forza la 'd' (day) anche se l'API manda 'n' (night)
-                                                        src={`https://openweathermap.org/img/wn/${day.icon.replace('n', 'd')}.png`} 
-                                                        alt="icon" 
-                                                        style={{ width: '40px', height: '40px' }}
-                                                    />
-                                                    
-                                                    {/* Temperature Min/Max Forecast */}
+                                                    <img src={`https://openweathermap.org/img/wn/${day.icon.replace('n', 'd')}.png`} alt="icon" style={{ width: '40px', height: '40px' }} />
                                                     <div style={{ display: 'flex', flexDirection: 'column', fontSize: '0.75rem', lineHeight: '1.4', width: '100%' }}>
-                                                        <div style={{ color: '#1e40af' }}>
-                                                            <strong>max:</strong> {Math.round(day.max_temperature)}°
-                                                        </div>
-                                                        <div style={{ color: '#64748b' }}>
-                                                            <strong>min:</strong> {Math.round(day.min_temperature)}°
-                                                        </div>
+                                                        <div style={{ color: '#1e40af' }}><strong>max:</strong> {Math.round(day.max_temperature)}°</div>
+                                                        <div style={{ color: '#64748b' }}><strong>min:</strong> {Math.round(day.min_temperature)}°</div>
                                                     </div>
                                                 </div>
                                             ))}
                                         </div>
                                     )}
                                 </div>
-                            ) : (
-                                <p className="text-muted" style={{ padding: '20px' }}>Caricamento meteo...</p>
-                            )}
+                            ) : <p className="text-muted" style={{ padding: '20px' }}>Caricamento meteo...</p>}
                         </div>
 
                         {/* ALERT BOX */}
@@ -465,13 +524,8 @@ function Monitoring() {
                                         onClick={handleClearAlerts}
                                         className="btn" 
                                         style={{ 
-                                            background: '#fee2e2', 
-                                            color: '#b91c1c', 
-                                            border: '1px solid #fca5a5', 
-                                            padding: '4px 10px', 
-                                            fontSize: '0.8rem',
-                                            cursor: 'pointer',
-                                            borderRadius: '6px'
+                                            background: '#fee2e2', color: '#b91c1c', border: '1px solid #fca5a5', 
+                                            padding: '4px 10px', fontSize: '0.8rem', cursor: 'pointer', borderRadius: '6px'
                                         }}
                                     >
                                         Cancella Tutto
@@ -482,55 +536,42 @@ function Monitoring() {
                             {alerts.length > 0 ? (
                                 <ul style={{ listStyle: 'none', padding: 0, margin: 0, maxHeight: '300px', overflowY: 'auto' }}>
                                     {alerts.map((alert) => {
-                                        // LOGICA DATA: Controllo se è oggi
                                         const alertDate = new Date(alert.timestamp);
                                         const today = new Date();
                                         const isToday = alertDate.toDateString() === today.toDateString();
 
                                         return (
                                             <li key={alert.id} style={{ padding: '10px 0', borderBottom: '1px solid #fecaca', fontSize: '0.9rem', color: '#b91c1c' }}>
-                                                {/* Data e Ora Condizionale */}
                                                 <span style={{ fontSize: '0.75rem', opacity: 0.7, display: 'block', marginBottom: '2px', color: '#991b1b' }}>
                                                     {isToday 
-                                                        ? alertDate.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) // Solo ore:min:sec
-                                                        : alertDate.toLocaleString('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' }) // gg/mm/aaaa hh:mm:ss
+                                                        ? alertDate.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) 
+                                                        : alertDate.toLocaleString('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' })
                                                     }
                                                 </span>
-                                                
-                                                {/* Tipo Sensore e Messaggio */}
                                                 <div style={{ lineHeight: '1.4' }}>
                                                     <span style={{ 
-                                                        fontWeight: 'bold', 
-                                                        textTransform: 'capitalize', 
-                                                        marginRight: '5px',
-                                                        background: '#fee2e2',
-                                                        padding: '1px 6px',
-                                                        borderRadius: '4px',
-                                                        fontSize: '0.8rem'
+                                                        fontWeight: 'bold', textTransform: 'capitalize', marginRight: '5px',
+                                                        background: '#fee2e2', padding: '1px 6px', borderRadius: '4px', fontSize: '0.8rem'
                                                     }}>
                                                         {alert.sensor_type}:
                                                     </span>
-                                                    {alert.message}
+                                                    <span title={alert.message}>
+                                                        {truncateText(alert.message, 45)}
+                                                    </span>
                                                 </div>
                                             </li>
                                         );
                                     })}
                                 </ul>
-                            ) : (
-                                <div style={{ color: '#b91c1c', opacity: 0.7, fontStyle: 'italic', padding: '10px 0' }}>
-                                    Nessun allarme rilevato.
-                                </div>
-                            )}
+                            ) : <div style={{ color: '#b91c1c', opacity: 0.7, fontStyle: 'italic', padding: '10px 0' }}>Nessun allarme rilevato.</div>}
                         </div>
+
                         {/* RULES ENGINE */}
                         <div className="glass-card">
                             <h3 style={{ marginTop: 0, color: '#374151' }}>⚙️ Automazione</h3>
                             
-                            {/* FORM DI AGGIUNTA */}
                             <form onSubmit={handleAddRule} style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1rem' }}>
                                 <div style={{ display: 'flex', gap: '0.5rem' }}>
-                                    
-                                    {/* SELECT SENSOR TYPE */}
                                     <select 
                                         value={newRule.sensor_type} 
                                         onChange={(e) => setNewRule({ ...newRule, sensor_type: e.target.value })} 
@@ -539,13 +580,10 @@ function Monitoring() {
                                         required
                                     >
                                         {[...new Set(sensorTypes.map(t => t.type_name))].map((typeName, index) => (
-                                            <option key={index} value={typeName}>
-                                                {typeName}
-                                            </option>
+                                            <option key={index} value={typeName}>{typeName}</option>
                                         ))}
                                     </select>
 
-                                    {/* SELECT OPERATOR */}
                                     <select 
                                         value={newRule.condition} 
                                         onChange={(e) => setNewRule({ ...newRule, condition: e.target.value })} 
@@ -557,94 +595,78 @@ function Monitoring() {
                                         <option value="==">==</option>
                                     </select>
                                 </div>
-
-                                <input 
-                                    placeholder="Soglia" 
-                                    type="number" 
-                                    value={newRule.threshold} 
-                                    onChange={(e) => setNewRule({ ...newRule, threshold: e.target.value })} 
-                                    className="input-field" 
-                                    required 
-                                />
-                                <input 
-                                    placeholder="Messaggio alert..." 
-                                    value={newRule.message} 
-                                    onChange={(e) => setNewRule({ ...newRule, message: e.target.value })} 
-                                    className="input-field" 
-                                    required 
-                                />
+                                <input placeholder="Soglia" type="number" value={newRule.threshold} onChange={(e) => { setNewRule({ ...newRule, threshold: e.target.value }); clearErrorField('threshold'); }} className={`input-field ${fieldErrors.threshold ? 'input-error' : ''}`} style={getInputStyle('threshold')} required />
+                                {fieldErrors.threshold && (
+                                    <span style={{ color: '#dc3545', fontSize: '0.8rem', marginTop: '2px', display: 'block' }}>
+                                        {fieldErrors.threshold}
+                                    </span>
+                                )}
+                                <input placeholder="Messaggio alert..." value={newRule.message} onChange={(e) => { setNewRule({ ...newRule, message: e.target.value }); clearErrorField('message'); }} className={`input-field ${fieldErrors.message ? 'input-error' : ''}`} style={getInputStyle('message')} required />
+                                {fieldErrors.message && (
+                                    <span style={{ color: '#dc3545', fontSize: '0.8rem', marginTop: '2px', display: 'block' }}>
+                                        {fieldErrors.message}
+                                    </span>
+                                )}
                                 <button type="submit" className="btn btn-primary" style={{ width: '100%', fontSize: '0.9rem' }}>+ Aggiungi Regola</button>
                             </form>
                             
-                            {/* LISTA REGOLE ESISTENTI */}
                             <div style={{ maxHeight: '150px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                                 {(rules || []).map((r, idx) => (
                                     <div key={idx} className="flex-between" style={{ background: '#f9fafb', padding: '0.5rem', borderRadius: '6px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                         <span style={{ fontSize: '0.8rem', color: '#374151' }}>
-                                            {/* Mostra il tipo sensore ESATTAMENTE come salvato nel DB */}
                                             <b>{r.sensor_type}</b> {r.condition} {r.threshold}
+                                            {r.message ? ` : ${r.message}` : ''}
                                         </span>
-                                        <button 
-                                            onClick={() => handleDeleteRule(r.rule_name)} 
-                                            style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#ef4444', fontSize: '1.2rem', lineHeight: 1 }}
-                                        >
-                                            ✕
-                                        </button>
+                                        <button onClick={() => handleDeleteRule(r.rule_name)} style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#ef4444', fontSize: '1.2rem', lineHeight: 1 }}>✕</button>
                                     </div>
                                 ))}
                             </div>
                         </div>
-                    </div>
 
-                    
-                    {/*
-                    COLONNA DESTRA
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-
-                        RULES ENGINE
+                        {/* SENSORS MANAGER */}
                         <div className="glass-card">
-                            <h3 style={{ marginTop: 0, color:'#374151' }}>⚙️ Automazione</h3>
-                            <form onSubmit={handleAddRule} style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1rem' }}>
-                                <div style={{ display: 'flex', gap: '0.5rem' }}>
-                                    <select value={newRule.parameter} onChange={(e) => setNewRule({...newRule, parameter: e.target.value})} className="input-field" style={{ flex: 2 }}>
-                                        <option value="temperature">Temperature</option>
-                                        <option value="humidity">Humidity</option>
-                                        <option value="soil_moisture">Soil Moisture</option>
-                                        {sensorTypes.map(t => {
-                                            const key = t.name.toLowerCase().replace(/ /g, "_");
-                                            if(['temperature','humidity','soil_moisture'].includes(key)) return null;
-                                            return <option key={t.id} value={key}>{t.name}</option>
-                                        })}
-                                    </select>
-                                    <select value={newRule.operator} onChange={(e) => setNewRule({...newRule, operator: e.target.value})} className="input-field" style={{ flex: 1 }}>
-                                        <option value=">">&gt;</option><option value="<">&lt;</option>
-                                    </select>
-                                </div>
-                                <input placeholder="Soglia" type="number" value={newRule.threshold} onChange={(e) => setNewRule({...newRule, threshold: e.target.value})} className="input-field" required />
-                                <input placeholder="Messaggio alert..." value={newRule.message} onChange={(e) => setNewRule({...newRule, message: e.target.value})} className="input-field" required />
-                                <button type="submit" className="btn btn-primary" style={{ width: '100%', fontSize:'0.9rem' }}>+ Aggiungi Regola</button>
-                            </form>
+                            <h3 style={{ marginTop: 0, color: '#374151' }}>📡 Sensori</h3>
                             
-                            <div style={{ maxHeight: '150px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                                {(rules || []).map(r => (
-                                    <div key={r.id} className="flex-between" style={{ background: '#f9fafb', padding: '0.5rem', borderRadius: '6px' }}>
-                                        <span style={{ fontSize: '0.8rem', color:'#374151' }}><b>{r.parameter}</b> {r.operator} {r.threshold}</span>
-                                        <button onClick={() => handleDeleteRule(r.id)} style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#ef4444' }}>✕</button>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-
-                        {/* SENSORS MANAGER
-                        <div className="glass-card">
-                            <h3 style={{ marginTop: 0, color:'#374151' }}>📡 Sensori</h3>
                             <form onSubmit={handleRegisterSensor} style={{ marginBottom: '1rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                                <input placeholder="ID Hardware" value={newSensor.sensor_id} onChange={e=>setNewSensor({...newSensor, sensor_id:e.target.value})} className="input-field" required />
+                                <input 
+                                    placeholder="ID Hardware" 
+                                    value={newSensor.sensor_id} 
+                                    onChange={e => { setNewSensor({ ...newSensor, sensor_id: e.target.value }); clearErrorField('sensor_id'); }} 
+                                    className={`input-field ${fieldErrors.sensor_id ? 'input-error' : ''}`}
+                                    style={getInputStyle('sensor_id')}
+                                    required
+                                />
+                                {fieldErrors.sensor_id && (
+                                    <span style={{ color: '#dc3545', fontSize: '0.8rem', marginTop: '2px', display: 'block' }}>
+                                        {fieldErrors.sensor_id}
+                                    </span>
+                                )}
                                 <div style={{ display: 'flex', gap: '0.5rem' }}>
-                                    <input placeholder="Posizione" value={newSensor.location} onChange={e=>setNewSensor({...newSensor, location:e.target.value})} className="input-field" style={{flex: 1}} />
-                                    <select value={newSensor.type} onChange={e=>setNewSensor({...newSensor, type:e.target.value})} className="input-field" style={{flex: 1}} required>
-                                        <option value="">-- Tipo --</option>
-                                        {sensorTypes.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
+                                    <div style={{ flex: 1 }}>
+                                        <input 
+                                            placeholder="Posizione" 
+                                            value={newSensor.location} 
+                                            onChange={e => { setNewSensor({ ...newSensor, location: e.target.value }); clearErrorField('location'); }} 
+                                            className={`input-field ${fieldErrors.location ? 'input-error' : ''}`}
+                                            style={{ width: '100%', ...getInputStyle('location') }} 
+                                            required
+                                        />
+                                        {fieldErrors.location && (
+                                            <span style={{ color: '#dc3545', fontSize: '0.8rem', marginTop: '2px', display: 'block' }}>
+                                                {fieldErrors.location}
+                                            </span>
+                                        )}
+                                    </div>
+                                    <select 
+                                        value={newSensor.sensor_type} 
+                                        onChange={e => setNewSensor({ ...newSensor, sensor_type: e.target.value })} 
+                                        className="input-field" 
+                                        style={{ flex: 1 }} 
+                                        required
+                                    >
+                                        {[...new Set(sensorTypes.map(t => t.type_name))].map((typeName, index) => (
+                                            <option key={index} value={typeName}>{typeName}</option>
+                                        ))}
                                     </select>
                                 </div>
                                 <button className="btn btn-secondary" style={{ width: '100%' }}>+ Aggiungi Sensore</button>
@@ -652,18 +674,27 @@ function Monitoring() {
                             
                             <div style={{ maxHeight: '120px', overflowY: 'auto' }}>
                                 {authorizedSensors.map(s => (
-                                    <div key={s.sensor_id} className="flex-between" style={{ padding: '6px 0', borderBottom: '1px solid #f3f4f6' }}>
+                                    <div key={s.sensor_id} className="flex-between" style={{ padding: '6px 0', borderBottom: '1px solid #f3f4f6', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                         <div>
                                             <div style={{ fontWeight: '600', fontSize: '0.85rem' }}>{s.sensor_id}</div>
-                                            <div style={{fontSize:'0.75rem', color:'#9ca3af'}}>{s.location} • <span className="badge">{s.type}</span></div>
+                                            <div style={{ fontSize: '0.75rem', color: '#9ca3af' }}>
+                                                {s.location} 
+                                                {s.location && ' • '}
+                                                <span style={{ 
+                                                    background: '#e5e7eb', padding: '2px 6px', borderRadius: '4px', 
+                                                    color: '#374151', textTransform: 'capitalize' 
+                                                }}>
+                                                    {s.sensor_type}
+                                                </span>
+                                            </div>
                                         </div>
-                                        <button onClick={()=>handleDeleteSensor(s.sensor_id)} style={{ border: 'none', background: 'none', color: '#ef4444', cursor: 'pointer' }}>🗑️</button>
+                                        <button onClick={() => handleDeleteSensor(s.sensor_id)} style={{ border: 'none', background: 'none', color: '#ef4444', cursor: 'pointer' }}>✕</button>
                                     </div>
                                 ))}
                             </div>
                         </div>
+
                     </div>
-                    */}
                 </div>
             )}
         </div>

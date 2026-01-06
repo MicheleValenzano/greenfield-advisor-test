@@ -41,11 +41,13 @@ function MapClickHandler({ setForm, setMarkerPosition, clearError, setMapCenter,
             
             try {
                 // 2. Chiamata API Reverse Geocoding (usiamo fetch per evitare problemi di Header Auth/CORS)
-                const response = await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`);
+                const response = await axios.get(`${API_GATEWAY_URL}/fields/geocoding/reverse`, {
+                    params: { lat: lat, lon: lng }
+                })
+
+                // console.log("Reverse geocoding response:", response);
                 
-                if (!response.ok) throw new Error("Errore geocoding");
-                
-                const data = await response.json();
+                const data = response.data;
                 
                 // 3. Logica di estrazione nome (Priorità: town -> city -> village -> display_name parziale)
                 const addr = data.address || {};
@@ -113,11 +115,9 @@ const FieldManager = () => {
         setLoadingCities(true);
         try {
 
-            const cleanAxios = axios.create();
-
-            delete cleanAxios.defaults.headers.common['Authorization'];
-
-            const response = await cleanAxios.get(`https://geocoding-api.open-meteo.com/v1/search?name=${query}&count=5&language=it&format=json`);
+            const response = await axios.get(`${API_GATEWAY_URL}/fields/geocoding/search`, {
+                params: { name: query, limit: 5 }
+            });
 
             if (response.data.results && response.data.results.length > 0) {
                 // Se la ricerca è attiva (query > 2), mostriamo i suggerimenti
@@ -212,7 +212,7 @@ const FieldManager = () => {
         const loadingToast = toast.loading("Registrazione campo...");
         try {
 
-            const payload = { ...form, size: parseFloat(form.size) };
+            const payload = { ...form, size: parseFloat(form.size), start_date: form.start_date === '' ? null : form.start_date };
 
             const response = await axios.post(`${API_GATEWAY_URL}/fields`, payload);
             toast.success("Campo registrato!", { id: loadingToast });
