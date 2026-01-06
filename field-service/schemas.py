@@ -115,6 +115,30 @@ class NewSensorInField(BaseModel):
     location: str = Field(..., example="Nord Est", description="Posizione del sensore all'interno del campo")
     active: bool = Field(..., example=True, description="Indica se il sensore è attivo o inattivo")
 
+    @field_validator("sensor_id")
+    def validate_sensor_id(cls, value):
+        if not value.strip():
+            raise ValueError("L'identificativo del sensore non può essere vuoto.")
+        return value
+    
+    @field_validator("sensor_type")
+    def validate_sensor_type(cls, value):
+        if not value.strip():
+            raise ValueError("Il tipo di sensore non può essere vuoto.")
+        return value
+    
+    @field_validator("location")
+    def validate_location(cls, value):
+        if not value.strip():
+            raise ValueError("La posizione del sensore non può essere vuota.")
+        return value
+    
+    @field_validator("active")
+    def validate_active(cls, value):
+        if not isinstance(value, bool):
+            raise ValueError("Il campo 'active' deve essere un valore booleano.")
+        return value
+
     class Config:
         orm_mode = True
 
