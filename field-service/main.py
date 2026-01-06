@@ -60,6 +60,9 @@ def decode_access_token(jwt_token: str = Depends(oauth2_scheme)):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.weather_client = httpx.AsyncClient(base_url=WEATHER_SERVICE_URL, timeout=httpx.Timeout(5.0))
+
+    headers = {"User-Agent": "FieldService/1.0"}
+    app.state.http_client = httpx.AsyncClient(headers=headers, timeout=httpx.Timeout(5.0))
     
     global consumer
     consumer = RabbitMQFieldConsumer(rabbitmq_url=RABBITMQ_URL, queue_name=RABBITMQ_FIELD_QUEUE)
@@ -71,6 +74,7 @@ async def lifespan(app: FastAPI):
     yield
 
     await app.state.weather_client.aclose()
+    await app.state.http_client.aclose()
     
     if consumer:
         await consumer.close()
@@ -80,6 +84,10 @@ app = FastAPI(title="Field Service", lifespan=lifespan)
 
 def get_weather_client(request: Request) -> httpx.AsyncClient:
     return request.app.state.weather_client
+
+# AGGIUNTO
+def get_http_client(request: Request) -> httpx.AsyncClient:
+    return request.app.state.http_client
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
@@ -544,3 +552,60 @@ async def validate_field_owner_internal(field_name: str, db: AsyncSession = Depe
         raise HTTPException(status_code=403, detail="Non hai i permessi per accedere a questo campo.")
 
     return {"message": "Proprietario del campo validato."}
+
+@app.get("/fields/geocoding/reverse")
+async def reverse_geocoding(lat: float, lon: float, http_client: httpx.AsyncClient = Depends(get_http_client), token: dict = Depends(decode_access_token)):
+    """
+    Proxy verso il servizio di geocoding inverso di OpenStreetMap Nominatim.
+    Restituisce la città corrispondente alle coordinate fornite.
+    Parametri:
+    - lat: latitudine
+    - lon: longitudine
+    Returns:
+    - JSON con i dettagli della località.
+    Raises:
+    - HTTPException in caso di errori nel servizio di geocoding inverso.
+    """
+
+    url = "https://nominatim.openstreetmap.org/reverse"
+    params = {"lat": lat, "lon": lon, "format": "json"}
+    try:
+        response = await http_client.get(url, params=params)
+        response.raise_for_status()
+        data = response.json()
+        return data
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="Timeout nel servizio di geocoding inverso.")
+    except httpx.RequestError:
+        raise HTTPException(status_code=503, detail="Servizio di geocoding inverso non disponibile.")
+    except httpx.HTTPStatusError:
+        raise HTTPException(status_code=500, detail="Errore nel servizio di geocoding inverso.")
+
+@app.get("/fields/geocoding/search")
+async def search_geocoding(name: str, count: int = 5, http_client: httpx.AsyncClient = Depends(get_http_client), token: dict = Depends(decode_access_token)):
+    """
+    Proxy verso il servizio di geocoding di Open-Meteo per la ricerca della città.
+    Restituisce una lista di località corrispondenti al nome fornito.
+    Parametri:
+    - name: nome della località da cercare
+    - count: numero massimo di risultati da restituire
+    Returns:
+    - JSON con la lista delle località trovate.
+    Raises:
+    - HTTPException in caso di errori nel servizio di geocoding.
+    """
+
+    url = "https://geocoding-api.open-meteo.com/v1/search"
+    params = {"name": name, "count": count, "language": "it", "format": "json"}
+
+    try:
+        response = await http_client.get(url, params=params)
+        response.raise_for_status()
+        data = response.json()
+        return data
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="Timeout nel servizio di geocoding.")
+    except httpx.RequestError:
+        raise HTTPException(status_code=503, detail="Servizio di geocoding non disponibile.")
+    except httpx.HTTPStatusError:
+        raise HTTPException(status_code=500, detail="Errore nel servizio di geocoding.")
