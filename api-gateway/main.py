@@ -12,19 +12,22 @@ from typing import Optional
 
 app = FastAPI(title="API Gateway")
 
-# Configurazione CORS
+"""
+Configura il middleware CORS per consentire richieste da origini specifiche.
+"""
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Qui vanno specificati gli origin consentiti. Per sviluppo locale è stato Utilizzato "*"
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+
 async def check_ws_rate_limit(redis_client, key: str, limit: int, window: int):
     """
     Rate Limiter manuale per WebSocket.
-    Parametri:
+    Args:
     redis_client: Istanza del client Redis.
     key: Chiave unica per l'utente (es. ID utente).
     limit: Numero massimo di connessioni consentite nella finestra di tempo.
@@ -49,6 +52,13 @@ async def check_ws_rate_limit(redis_client, key: str, limit: int, window: int):
 
 
 def resolve_service(path: str) -> Optional[str]:
+    """
+    Risolve il servizio di destinazione in base al path della richiesta.
+    Args:
+        path: Path della richiesta.
+    Returns:
+        str | None: Nome del servizio corrispondente o None se non trovato.
+    """
     matches = [prefix for prefix in ROUTE_MAP if path == prefix or path.startswith(f"{prefix}/")]
     if not matches:
         return None
@@ -83,6 +93,12 @@ async def shutdown_event():
 
 @app.websocket("/{full_path:path}")
 async def websocket_gateway(full_path: str, websocket: WebSocket):
+    """
+    Endpoint WebSocket per l'API Gateway.
+    Args:
+        full_path: Path completo della richiesta WebSocket.
+        websocket: Connessione WebSocket.
+    """
     path = "/" + full_path
 
     # Rate limiting: blocco dell'indirizzo IP a 20 connessioni WebSocket ogni 60 secondi
@@ -101,7 +117,6 @@ async def websocket_gateway(full_path: str, websocket: WebSocket):
     service = resolve_service(path)
 
     # Verifiche preliminari
-
     if not service or service != "notifications":
         await websocket.close(code=1008, reason="Servizio non supportato per WebSocket.")
         return
@@ -109,7 +124,6 @@ async def websocket_gateway(full_path: str, websocket: WebSocket):
     if path.startswith("/internal"):
         await websocket.close(code=1008, reason="Accesso ai path interni non consentito.")
         return
-
     
     # Validazione parametri
     token = websocket.query_params.get("token")
@@ -140,11 +154,6 @@ async def websocket_gateway(full_path: str, websocket: WebSocket):
     target_url = f"{base_url}/{full_path}"
     if websocket.query_params:
         target_url += f"?{websocket.query_params}"
-
-    # query_string = ""
-    # if websocket.query_params:
-    #     query_string = f"&".join([f"{k}={v}" for k, v in websocket.query_params.items()])
-    # target_url = f"{base_url}/{full_path}?{query_string}" if query_string else f"{base_url}/{full_path}"
 
     close_code = 1000
     close_reason = "Chiusura normale"
@@ -177,7 +186,7 @@ async def websocket_gateway(full_path: str, websocket: WebSocket):
                         data = await target_ws.recv()
                         await websocket.send_text(data)
                 except websockets.exceptions.ConnectionClosed as e:
-                    # Il backend ha chiuso la connessione, restituisco il codice di chiusura e il motivo al client
+                    # Il backend ha chiuso la connessione, quindi viene restituito il codice di chiusura e il motivo al client
                     print("Servizio di destinazione disconnesso")
                     close_code = e.code
                     close_reason = e.reason
@@ -216,9 +225,18 @@ async def websocket_gateway(full_path: str, websocket: WebSocket):
 
 @app.api_route("/{full_path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"], dependencies=[Depends(RateLimiter(times=100, seconds=60))])
 async def gateway(full_path: str, request: Request):
+    """
+    Endpoint principale dell'API Gateway per il proxy delle richieste HTTP (di qualsiasi tipologia).
+    Applica il rate limiting di 100 richieste al minuto per indirizzo IP.
+    Args:
+        full_path: Path completo della richiesta.
+        request: Oggetto della richiesta FastAPI.
+    Returns:
+        Risposta dal servizio di destinazione.
+    """
     path = "/" + full_path
 
-    # Impedisco l'accesso WebSocket tramite questo endpoint HTTP
+    # Viene impedito l'accesso WebSocket tramite questo endpoint HTTP
     if path.startswith("/ws"):
         raise HTTPException(status_code=400, detail="Usa una connessione WebSocket per questo path.")
 

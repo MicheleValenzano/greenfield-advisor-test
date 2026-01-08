@@ -25,23 +25,9 @@ redis : aioredis.Redis = None
 http_client: httpx.AsyncClient = None
 
 
-CACHE_TTL_PERMISSIONS = 10 * 60 # 10 minutes
+CACHE_TTL_PERMISSIONS = 10 * 60 # Durata della cache dei permessi degli utenti (sull'accesso ai campi) in secondi (10 minuti)
 
-PUBLIC_KEY = os.getenv("JWT_PUBLIC_KEY", "PUBLIC_KEY")
-PUBLIC_KEY = """-----BEGIN PUBLIC KEY-----
-MIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEApXtfAxVV015pQOx026do
-IkRAVcRW9VieD0DSvP4PxQl055CBnJh42DrdshKWNvfSJ98OxH5Hz9WGMQHit1hQ
-HJwAC0/bue2sa5HoaH/0o7eyFVYnui+3YrYOYO/a2zG4qiSmkVwvOy/L+uymaAjl
-Y4fGzcf8TRMWEUZ7A4pIhvTuSMgRDyobVVmoBiKzvbAPqs3ggP8Vmd//hXovaSww
-JugwkvSVQvDaeRjKk2ENbwrA85BxtblE/sA1OKN0RQo1jkOECKuhi9nPhrRrtMs8
-MChlLW9GrBagFZVFA9LCTCSAXIWlzQIWNhUlh96/ih12KG3ynuXxxuggF9GeWLUl
-jtTXJSY6LyHmsRUsgC17S7sTyIYXmW4gJj4qXWGeVqRwsPj+aWQBYyi5IyBXH7gV
-iqJT39xgWLl81dYpO7B0Jx4zIc9MfYltsXXUxFDRuOftDQKKJ4bKDIdbjko3giUC
-A2LY9dJjJXB4j5wovqVJnDU4vrdgGmxZklRoaQq0dkWlhGAH982cQ1A6mfEOsDgc
-yO5xVZNmlQ7cVuNjyZ1Wr1Hcc4UYNSibzx6Y+8C4/x6jBodBxHofAPYR/jrFoLAu
-ACgboGEVD48oNVAd7XRnjXcOvu+kvRhLjwO6VoOJeRfArPAkXmL7pelkqY5RFcvg
-h8XIDNY39jp5TDH4Pa8/Q8MCAwEAAQ==
------END PUBLIC KEY-----"""
+PUBLIC_KEY = os.getenv("JWT_PUBLIC_KEY", "PUBLIC_KEY").replace("\\n", "\n")
 
 ALGORITHM = "RS256"
 
@@ -62,6 +48,9 @@ def decode_access_token(jwt_token: str) -> dict:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """
+    Gestione del ciclo di vita dell'applicazione FastAPI. Inizializza e chiude le risorse necessarie.
+    """
     global consumer, http_client, redis
 
     http_client = httpx.AsyncClient()
@@ -90,6 +79,16 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Notification Service", lifespan=lifespan)
 
 async def check_field_permission(field: str, user_id: str, token: str) -> bool:
+    """
+    Verifica se l'utente ha i permessi per accedere al campo specificato.
+    Utilizza Redis per la memorizzazione nella cache dei permessi.
+    Args:
+        field (str): Nome del campo da verificare.
+        user_id (str): ID dell'utente.
+        token (str): Token di accesso JWT dell'utente.
+    Returns:
+        bool: True se l'utente ha i permessi, altrimenti solleva WebSocketDisconnect.
+    """
     cache_key = f"permission:{user_id}:{field}"
     
     if redis:
@@ -102,6 +101,7 @@ async def check_field_permission(field: str, user_id: str, token: str) -> bool:
             elif cached_permission == "NOT_FOUND":
                 raise WebSocketDisconnect(code=1008, reason="Campo non trovato.")
     
+    # Se la cache non è disponibile o non contiene l'informazione, fare la richiesta al Field Service
     try:
         response = await http_client.get(f"{FIELD_SERVICE_URL}/internal/validate-field-owner", params={"field_name": field}, headers={"Authorization": f"Bearer {token}"})
 
@@ -125,6 +125,16 @@ async def check_field_permission(field: str, user_id: str, token: str) -> bool:
 
 @app.websocket("/ws/notifications")
 async def websocket_endpoint(websocket: WebSocket, field: str, token: str):
+    """
+    Endpoint WebSocket per la gestione delle notifiche in tempo reale.
+    Verifica il token di accesso e i permessi dell'utente per il campo specificato.
+    Args:
+        websocket (WebSocket): Connessione WebSocket.
+        field (str): Nome del campo per cui ricevere le notifiche.
+        token (str): Token di accesso JWT dell'utente.
+    Raises:
+        WebSocketDisconnect: Se il token non è valido o l'utente non ha i permessi.
+    """
     await websocket.accept()
     try:
         payload = decode_access_token(token)

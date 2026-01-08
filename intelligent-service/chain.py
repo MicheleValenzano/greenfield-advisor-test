@@ -8,9 +8,25 @@ from contexts import MLAnalysisContext
 from field_service_client import FieldServiceClient
 from httpx import HTTPStatusError
 
-# Contesto la chain di analisi
+# Contesto per la chain di analisi
 @dataclass
 class MLAnalysisChainContext:
+    """
+    Contesto per la catena di analisi ML.
+    Contiene i dati necessari per ogni fase della catena e i risultati intermedi.
+
+    Attributes:
+        payload (dict): Dati di input per la catena, inclusi field, sensor_types e window_size.
+        token (Optional[str]): Token JWT per l'autenticazione con field-service.
+        raw_readings (Optional[Dict[str, List[float]]]): Letture grezze dei sensori.
+        statistics (Optional[List[float]]): Statistiche calcolate dalle letture.
+        features (Optional[np.array]): Feature costruite per l'inferenza ML.
+        prediction (Optional[str]): Risultato della previsione ML.
+        confidence_score (Optional[float]): Punteggio di confidenza della previsione.
+        advice (Optional[str]): Consigli generati in base alla previsione.
+        stop (bool): Flag per interrompere la catena se necessario.
+    """
+
     # payload che contiene gli identificatori necessari (field, sensor_types, window_size)
     payload: dict[str, Any]
 
@@ -18,7 +34,7 @@ class MLAnalysisChainContext:
     token: Optional[str] = None
 
     # campi popolati durante la chain dagli handler
-    raw_readings: Optional[Dict[str, List[float]]] = None # Lista di letture per ogni tipo di sensore
+    raw_readings: Optional[Dict[str, List[float]]] = None
     statistics: Optional[List[float]] = None
     features: Optional[np.array] = None
     prediction: Optional[str] = None
@@ -30,30 +46,68 @@ class MLAnalysisChainContext:
 
 # Interfaccia per gli handler della chain
 class ChainHandler(ABC):
+    """
+    Interfaccia astratta per gli handler della catena.
+    Ogni handler deve implementare il metodo handle per processare il contesto.
+    """
     def __init__(self):
         self.next_handler: Optional['ChainHandler'] = None
     
     def set_next(self, handler: 'ChainHandler') -> 'ChainHandler':
+        """
+        Imposta il prossimo handler nella catena.
+        Args:
+            handler (ChainHandler): Il prossimo handler da eseguire.
+        Returns:
+            ChainHandler: Il prossimo handler.
+        """
         self.next_handler = handler
         return handler
     
     async def call_next(self, context: MLAnalysisChainContext) -> MLAnalysisChainContext:
+        """
+        Chiama il prossimo handler nella catena se esiste e se il flag stop non è impostato.
+        Args:
+            context (MLAnalysisChainContext): Il contesto da passare al prossimo handler.
+        Returns:
+            MLAnalysisChainContext: Il contesto dopo l'elaborazione del prossimo handler.
+        """
         if self.next_handler and not context.stop:
             return await self.next_handler.handle(context)
         return context
     
     @abstractmethod
     async def handle(self, context: MLAnalysisChainContext) -> MLAnalysisChainContext:
+        """
+        Metodo astratto per processare il contesto.
+        Args:
+            context (MLAnalysisChainContext): Il contesto da processare.
+        Returns:
+            MLAnalysisChainContext: Il contesto dopo l'elaborazione.
+        """
         pass
 
 # Handler concreti della chain
 class DataFetchHandler(ChainHandler):
+    """
+    Handler per il recupero delle letture dei sensori dal field-service.
+    Args:
+        field_service (FieldServiceClient): Client per interagire con il field-service.
+        max_items (int): Numero massimo di letture da recuperare per sensore.
+    """
     def __init__(self, field_service: FieldServiceClient, max_items: int = 50):
         super().__init__()
         self.field_service = field_service
         self.max_items = max_items
     
     async def handle(self, context: MLAnalysisChainContext) -> MLAnalysisChainContext:
+        """
+        Recupera le letture dei sensori dal field-service e le normalizza.
+        Args:
+            context (MLAnalysisChainContext): Il contesto contenente i parametri per il recupero delle letture.
+        Returns:
+            MLAnalysisChainContext: Il contesto aggiornato con le letture dei sensori.
+        """
         field = context.payload.get("field")
         sensor_types = context.payload.get("sensor_types", [])
         window_size = context.payload.get("window_size", self.max_items)
@@ -105,36 +159,62 @@ class DataFetchHandler(ChainHandler):
         return await self.call_next(context)
 
 class FeatureExtractionHandler(ChainHandler):
+    """
+    Handler per l'estrazione delle feature dalle letture dei sensori.
+    Calcola statistiche semplici (media) per ogni tipo di sensore.
+    """
     async def handle(self, context: MLAnalysisChainContext) -> MLAnalysisChainContext:
-        raw_readings = context.raw_readings
-        sensor_types = context.payload.get("sensor_types", [])
+        """
+        Estrae le feature dalle letture dei sensori calcolando la media per ogni tipo di sensore.
+        Args:
+            context (MLAnalysisChainContext): Il contesto contenente le letture dei sensori.
+        Returns:
+            MLAnalysisChainContext: Il contesto aggiornato con le statistiche calcolate.
+        """
+        try:
+            raw_readings = context.raw_readings
+            sensor_types = context.payload.get("sensor_types", [])
 
-        if not raw_readings:
-            context.prediction = "Nessuna lettura disponibile per l'estrazione delle feature."
+            if not raw_readings:
+                context.prediction = "Nessuna lettura disponibile per l'estrazione delle feature."
+                context.stop = True
+                return context
+            
+            statistics = []
+            missing_sensors = []
+            for sensor_type in sensor_types:
+                readings = raw_readings.get(sensor_type, [])
+                if readings and len(readings) > 0:
+                    statistics.append(sum(readings) / len(readings))
+                else:
+                    missing_sensors.append(sensor_type)
+                    statistics.append(0.0)
+            
+            if missing_sensors:
+                context.prediction = f"Letture mancanti per i seguenti tipi di sensori: {', '.join(missing_sensors)}"
+                context.stop = True
+                return context
+
+            context.statistics = statistics
+        except Exception as e:
+            context.prediction = "Errore durante l'estrazione delle feature."
             context.stop = True
             return context
-        
-        statistics = []
-        missing_sensors = []
-        for sensor_type in sensor_types:
-            readings = raw_readings.get(sensor_type, [])
-            if readings and len(readings) > 0:
-                statistics.append(sum(readings) / len(readings))
-            else:
-                missing_sensors.append(sensor_type)
-                statistics.append(0.0)
-        
-        if missing_sensors:
-            context.prediction = f"Letture mancanti per i seguenti tipi di sensori: {', '.join(missing_sensors)}"
-            context.stop = True
-            return context
-
-        context.statistics = statistics
 
         return await self.call_next(context)
 
 class InputConstructionHandler(ChainHandler):
+    """
+    Handler per la costruzione dell'input per l'inferenza ML.
+    Trasforma le statistiche in un array numpy adatto per il modello ML.
+    """
     async def handle(self, context: MLAnalysisChainContext) -> MLAnalysisChainContext:
+        """
+        Costruisce l'input per l'inferenza ML trasformando le statistiche in un array numpy.
+        Args:
+            context (MLAnalysisChainContext): Il contesto contenente le statistiche calcolate.
+        Returns:
+            MLAnalysisChainContext: Il contesto aggiornato con le feature costruite."""
         statistics = context.statistics
         if not statistics or len(statistics) == 0:
             context.prediction = "Statistiche non disponibili per la costruzione delle feature."
@@ -152,11 +232,24 @@ class InputConstructionHandler(ChainHandler):
         return await self.call_next(context)
 
 class MLInferenceHandler(ChainHandler):
+    """
+    Handler per l'inferenza del modello ML.
+    Utilizza l'IntelligentAnalyzer per ottenere la previsione basata sulle feature.
+    Args:
+        analyzer (IntelligentAnalyzer): Analizzatore intelligente per l'inferenza ML.
+    """
     def __init__(self, analyzer: IntelligentAnalyzer):
         super().__init__()
         self.analyzer = analyzer
     
     async def handle(self, context: MLAnalysisChainContext) -> MLAnalysisChainContext:
+        """
+        Esegue l'inferenza del modello ML utilizzando l'IntelligentAnalyzer.
+        Args:
+            context (MLAnalysisChainContext): Il contesto contenente le feature per l'inferenza.
+        Returns:
+            MLAnalysisChainContext: Il contesto aggiornato con la previsione e il punteggio di confidenza.
+        """
         features = context.features
         if features is None:
             context.prediction = "Feature non disponibili per l'inferenza."
@@ -179,7 +272,18 @@ class MLInferenceHandler(ChainHandler):
         return await self.call_next(context)
 
 class AdviceGenerationHandler(ChainHandler):
+    """
+    Handler per la generazione dei consigli basati sulla previsione ML.
+    Mappa le etichette di previsione a consigli specifici per l'utente.
+    """
     async def handle(self, context: MLAnalysisChainContext) -> MLAnalysisChainContext:
+        """
+        Genera consigli basati sulla previsione ML.
+        Args:
+            context (MLAnalysisChainContext): Il contesto contenente la previsione ML.
+        Returns:
+            MLAnalysisChainContext: Il contesto aggiornato con i consigli generati.
+        """
         prediction = context.prediction
         if not prediction:
             context.advice = "Nessuna previsione disponibile per generare consigli."
@@ -199,6 +303,14 @@ class AdviceGenerationHandler(ChainHandler):
 
 # Builder della chain
 def build_ml_chain(analyzer: IntelligentAnalyzer, field_service: FieldServiceClient) -> ChainHandler:
+    """
+    Costruisce la catena di handler per l'analisi ML.
+    Args:
+        analyzer (IntelligentAnalyzer): Analizzatore intelligente per l'inferenza ML.
+        field_service (FieldServiceClient): Client per interagire con il field-service.
+    Returns:
+        ChainHandler: Il primo handler della catena.
+    """
     data_fetch_handler = DataFetchHandler(field_service=field_service)
     feature_extraction_handler = FeatureExtractionHandler()
     input_construction_handler = InputConstructionHandler()

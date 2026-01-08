@@ -10,12 +10,16 @@ DB_PORT = os.getenv("POSTGRES_PORT", "5432")
 
 DATABASE_URL = f"postgresql+asyncpg://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
+# Crea l'engine asincrono per SQLAlchemy
 engine = create_async_engine(DATABASE_URL, echo=True, pool_size=20)
 
+# Crea una sessione asincrona
 AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
+# Base per i modelli ORM
 Base = declarative_base()
 
+# Dipendenza per ottenere una sessione di database asincrona
 async def get_db() -> AsyncSession:
     async with AsyncSessionLocal() as session:
         yield session

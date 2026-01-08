@@ -8,6 +8,9 @@ NOTIFICATION_SERVICE_URL = os.getenv("NOTIFICATION_SERVICE_URL", "ws://notificat
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis-api-gateway:6379")
 
+"""
+Mappa delle rotte ai servizi corrispondenti.
+"""
 ROUTE_MAP = {
     # auth-service
     "/login": "auth",
@@ -31,6 +34,9 @@ ROUTE_MAP = {
     "/ws/notifications": "notifications",
 }
 
+"""
+Mappa dei nomi dei servizi ai loro URL.
+"""
 SERVICE_URLS = {
     "auth": AUTH_SERVICE_URL,
     "field": FIELD_SERVICE_URL,
@@ -39,6 +45,9 @@ SERVICE_URLS = {
     "notifications": NOTIFICATION_SERVICE_URL,
 }
 
+"""
+Elenco delle rotte pubbliche che non richiedono autenticazione (token JWT).
+"""
 PUBLIC_PATHS = {
     "/login",
     "/register",

@@ -35,6 +35,16 @@ function Monitoring() {
     const [alerts, setAlerts] = useState([]);
     const [rules, setRules] = useState([]);
     const [sensorTypes, setSensorTypes] = useState([]);
+
+    // Stato per il limite di letture
+    const [historyLimit, setHistoryLimit] = useState(50);
+    const limitRef = useRef(50);
+
+    // Sincronizzazione del ref ogni volta che cambia lo stato
+    useEffect(() => {
+        limitRef.current = historyLimit;
+    }, [historyLimit]);
+
     
     // STATI FORM (Inizializzati vuoti, verranno popolati dall'useEffect)
     const [newSensor, setNewSensor] = useState({ sensor_id: '', location: '', sensor_type: '' });
@@ -97,7 +107,7 @@ function Monitoring() {
         try {
             const results = await Promise.allSettled([
                 axios.get(`${API_GATEWAY_URL}/fields/${field_name}/weather`),
-                axios.get(`${API_GATEWAY_URL}/fields/${field_name}/readings?limit=50`),
+                axios.get(`${API_GATEWAY_URL}/fields/${field_name}/readings?limit=${historyLimit}`),
                 axios.get(`${API_GATEWAY_URL}/fields/${field_name}/sensors`),
                 axios.get(`${API_GATEWAY_URL}/rules?field=${field_name}`),
                 axios.get(`${API_GATEWAY_URL}/alerts/${field_name}?limit=10`),
@@ -114,6 +124,8 @@ function Monitoring() {
             if (results[4].status === 'fulfilled') setAlerts(results[4].value.data);
             if (results[5].status === 'fulfilled') setSensorTypes(results[5].value.data);
 
+            console.log("Readings fetched:", results[1].value.data);
+
         } catch (error) { 
             console.log(error);
         } finally {
@@ -123,8 +135,7 @@ function Monitoring() {
 
     useEffect(() => {
         fetchData();
-    }, [selectedField]);
-
+    }, [selectedField, historyLimit]);
     // Gestione WebSocket per notifiche in tempo reale
     useEffect(() => {
         if (!token || !selectedField) return; // Se mancano i dati necessari, non si prova la connessione
@@ -165,8 +176,8 @@ function Monitoring() {
                         setReadings(prevReadings => {
                             const updatedReadings = [data, ...prevReadings];
 
-                            if (updatedReadings.length > 50) {
-                                return updatedReadings.slice(0, 50);
+                            if (updatedReadings.length > limitRef.current) {
+                                return updatedReadings.slice(0, limitRef.current);
                             }
                             return updatedReadings;
                         });
@@ -180,7 +191,7 @@ function Monitoring() {
                             return [newAlert, ...prevAlerts];
                         })
 
-                        toast.error(`⚠️ Nuovo allarme:${data.message}\n(Tipo sensore: ${data.sensor_type})`, { duration: 4000 });
+                        toast.error(`⚠️ Nuovo allarme: ${data.message}\n(Tipo sensore: ${data.sensor_type})`, { duration: 4000 });
                     }
 
                 } catch (err) {
@@ -329,37 +340,65 @@ function Monitoring() {
 
     // --- ELABORAZIONE DATI GRAFICO ---
 
-    const { chartData, activeCurves } = useMemo(() => {
-        if (!readings || readings.length === 0) return { chartData: [], activeCurves: [] };
-        const curvesSet = new Map();
+    const { chartData, activeCurves, unitsMap } = useMemo(() => {
+        if (!readings || readings.length === 0) {
+            return { chartData: [], activeCurves: [], unitsMap: {} };
+        }
 
-        const grouped = readings.reduce((acc, curr) => {
-            const dateObj = new Date(curr.timestamp);
-            dateObj.setMilliseconds(0);
-            const timeKey = dateObj.toISOString();
+        const grouped = {};
+        const unit = {};
 
-            if (!acc[timeKey]) acc[timeKey] = { timestamp: timeKey };
+        readings.forEach(r => {
+            const date = new Date(r.timestamp);
+            date.setMilliseconds(0);
+            const timeKey = date.toISOString();
 
-            const typeKey = curr.sensor_type.toLowerCase().replace(/ /g, "_");
-            const uniqueKey = `${typeKey}_${curr.sensor_id}`;
+            const typeKey = r.sensor_type.toLowerCase().replace(/ /g, "_");
 
-            acc[timeKey][uniqueKey] = curr.value;
-
-            if (!curvesSet.has(uniqueKey)) {
-                curvesSet.set(uniqueKey, {
-                    dataKey: uniqueKey,
-                    sensorId: curr.sensor_id,
-                    type: curr.sensor_type,
-                    unit: curr.unit,
-                    name: `${curr.sensor_type} (${curr.sensor_id})` 
-                });
+            if (!unit[typeKey]) {
+                unit[typeKey] = r.unit;
             }
-            return acc;
-        }, {});
 
-        const data = Object.values(grouped).sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-        return { chartData: data, activeCurves: Array.from(curvesSet.values()) };
+            if (!grouped[timeKey]) {
+                grouped[timeKey] = {};
+            }
 
+            if (!grouped[timeKey][typeKey]) {
+                grouped[timeKey][typeKey] = [];
+            }
+
+            grouped[timeKey][typeKey].push(r.value);
+        });
+
+        // Calcolo medie
+        const data = Object.entries(grouped).map(([timestamp, sensors]) => {
+            const row = { timestamp };
+
+            Object.entries(sensors).forEach(([type, values]) => {
+                const avg =
+                    values.reduce((sum, v) => sum + v, 0) / values.length;
+                row[type] = Number(avg.toFixed(2));
+            });
+
+            return row;
+        });
+
+        data.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+        // Curve attive = una per tipo sensore
+        const sensorTypesSet = new Set();
+        readings.forEach(r =>
+            sensorTypesSet.add(
+                r.sensor_type.toLowerCase().replace(/ /g, "_")
+            )
+        );
+
+        const curves = Array.from(sensorTypesSet).map(type => ({
+            dataKey: type,
+            name: `${type.replace(/_/g, " ")} (media)`
+        }));
+
+        return { chartData: data, activeCurves: curves, unitsMap: unit };
     }, [readings]);
 
     return (
@@ -379,49 +418,70 @@ function Monitoring() {
                         
                         {/* CHART DINAMICO */}
                         <div className="glass-card">
-                            <h3 style={{ marginTop: 0, marginBottom: '1rem', color: '#1e3a8a' }}>📊 Andamento Sensori</h3>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                                <h3 style={{ margin: 0, color: '#1e3a8a' }}>📊 Andamento Medio Rilevazioni Sensori</h3>
+                                
+                                {/* NUOVA SELECT */}
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    <label htmlFor="limitSelect" style={{ fontSize: '0.85rem', color: '#6b7280', whiteSpace: 'nowrap', margin: 0 }}>Mostra:</label>
+                                    <select 
+                                        id="limitSelect"
+                                        value={historyLimit}
+                                        onChange={(e) => setHistoryLimit(Number(e.target.value))}
+                                        className="input-field"
+                                        style={{ padding: '4px 8px', fontSize: '0.85rem', width: 'auto', height: '30px' }}
+                                    >
+                                        <option value={20}>Ultime 20</option>
+                                        <option value={50}>Ultime 50</option>
+                                        <option value={100}>Ultime 100</option>
+                                        <option value={200}>Ultime 200</option>
+                                    </select>
+                                </div>
+                            </div>
                             <ResponsiveContainer width="100%" height={300}>
                                 <AreaChart data={chartData}>
                                     <defs>
-                                        {activeCurves.map(curve => {
-                                            const color = stringToColor(curve.dataKey); 
-                                            return (
-                                                <linearGradient key={curve.dataKey} id={`grad${curve.dataKey}`} x1="0" y1="0" x2="0" y2="1">
-                                                    <stop offset="5%" stopColor={color} stopOpacity={0.8}/>
-                                                    <stop offset="95%" stopColor={color} stopOpacity={0}/>
-                                                </linearGradient>
-                                            )
-                                        })}
+                                    {activeCurves.map(curve => {
+                                        const color = stringToColor(curve.dataKey);
+                                        return (
+                                        <linearGradient key={curve.dataKey} id={`grad${curve.dataKey}`} x1="0" y1="0" x2="0" y2="1">
+                                            <stop offset="5%" stopColor={color} stopOpacity={0.3}/>
+                                            <stop offset="95%" stopColor={color} stopOpacity={0}/>
+                                        </linearGradient>
+                                        );
+                                    })}
                                     </defs>
-                                    
+
                                     <CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.3} />
                                     <XAxis dataKey="timestamp" tickFormatter={formatXAxis} axisLine={false} tickLine={false} style={{fontSize:'0.75rem'}} />
                                     <YAxis axisLine={false} tickLine={false} />
                                     <Tooltip 
                                         contentStyle={{ borderRadius: '12px' }} 
                                         labelFormatter={formatTooltipLabel} 
-                                        formatter={(value, name) => [value, name]} 
+                                        formatter={(value, name, item) => {
+                                            const unit = unitsMap[item.dataKey] || '';
+                                            return [`${value} ${unit}`, name];
+                                        }} 
                                     />
-                                    
+
                                     {activeCurves.map(curve => {
-                                        const color = stringToColor(curve.dataKey);
-                                        return (
-                                            <Area 
-                                                key={curve.dataKey}
-                                                type="monotone" 
-                                                dataKey={curve.dataKey} 
-                                                name={curve.name}
-                                                unit={curve.unit}
-                                                stroke={color} 
-                                                fill={`url(#grad${curve.dataKey})`} 
-                                                connectNulls={true} 
-                                                strokeWidth={2}
-                                                activeDot={{ r: 6 }}
-                                            />
-                                        );
+                                    const color = stringToColor(curve.dataKey);
+                                    return (
+                                        <Area 
+                                        key={curve.dataKey}
+                                        type="monotone" 
+                                        dataKey={curve.dataKey} 
+                                        name={curve.name}
+                                        stroke={color} 
+                                        fill={`url(#grad${curve.dataKey})`} 
+                                        connectNulls={true} 
+                                        strokeWidth={2}
+                                        activeDot={{ r: 6 }}
+                                        />
+                                    );
                                     })}
                                 </AreaChart>
-                            </ResponsiveContainer>
+                                </ResponsiveContainer>
                         </div>
 
                         {/* TABELLA LOG */}

@@ -3,6 +3,18 @@ from aio_pika import connect_robust, IncomingMessage, ExchangeType
 from websocket_manager import WebSocketManager
 
 class RabbitMQNotificationConsumer:
+    """
+    Consuma messaggi da RabbitMQ e inoltra le notifiche ai client WebSocket.
+    Ascolta due exchange: uno per le letture dei sensori e uno per gli alert.
+
+    Attributes:
+        rabbitmq_url (str): URL di connessione a RabbitMQ.
+        sensors_exchange_name (str): Nome dell'exchange per le letture dei sensori.
+        alerts_exchange_name (str): Nome dell'exchange per gli alert.
+        field_routing_key (str): Routing key per le letture dei sensori.
+        alerts_routing_key (str): Routing key per gli alert.
+        websocket_manager (WebSocketManager): Gestore delle connessioni WebSocket.
+    """
     def __init__(self, rabbitmq_url: str, 
                  sensors_exchange_name: str, 
                  alerts_exchange_name: str,
@@ -21,6 +33,9 @@ class RabbitMQNotificationConsumer:
         self.alerts_exchange = None
     
     async def connect(self):
+        """
+        Stabilisce la connessione a RabbitMQ e configura gli exchange e le code.
+        """
         self.connection = await connect_robust(self.rabbitmq_url)
         self.channel = await self.connection.channel()
 
@@ -39,8 +54,13 @@ class RabbitMQNotificationConsumer:
         await alerts_queue.consume(self.handle_alert_message)
 
     async def handle_reading_message(self, message: IncomingMessage):
+        """
+        Gestisce i messaggi relativi alle nuove letture dei sensori.
+        Inoltra la lettura ai client WebSocket interessati.
+        Args:
+            message (IncomingMessage): Il messaggio ricevuto da RabbitMQ.
+        """
         async with message.process():
-            # qui puoi personalizzare il formato del messaggio se necessario
             payload = json.loads(message.body.decode())
             field = payload["field_id"]
             print("Received reading for field:", field, "payload:", payload)
@@ -52,8 +72,13 @@ class RabbitMQNotificationConsumer:
                 await self.websocket_manager.send_notification(field, message=envelope)
     
     async def handle_alert_message(self, message: IncomingMessage):
+        """
+        Gestisce i messaggi relativi agli alert.
+        Inoltra l'alert ai client WebSocket interessati.
+        Args:
+            message (IncomingMessage): Il messaggio ricevuto da RabbitMQ.
+        """
         async with message.process():
-            # qui puoi personalizzare il formato del messaggio se necessario
             payload = json.loads(message.body.decode())
             field = payload["field"]
             print("Received alert for field:", field, "payload:", payload)

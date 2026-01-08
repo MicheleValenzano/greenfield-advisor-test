@@ -2,6 +2,16 @@ import httpx
 from fastapi import Response
 
 async def proxy_request(request, target_base_url, forward_path):
+    """
+    Proxy per inoltrare le richieste HTTP ai servizi di backend.
+    Esclude alcune intestazioni non necessarie.
+    Args:
+        request: Oggetto della richiesta FastAPI.
+        target_base_url: URL base del servizio di destinazione.
+        forward_path: Path da inoltrare al servizio di destinazione.
+    Returns:
+        Risposta dal servizio di destinazione. Esclude alcune intestazioni non necessarie.
+    """
 
     headers = dict(request.headers)
     headers.pop("host", None) 

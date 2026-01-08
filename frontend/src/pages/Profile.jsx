@@ -69,8 +69,14 @@ export default function Profile() {
     e.preventDefault();
     setFieldErrors({});
     const toastId = toast.loading("Aggiornamento profilo...");
+
+    const payload = {
+      ...form,
+      birthdate: form.birthdate === "" ? null : form.birthdate
+    }
+
     try {
-      const updated = await axios.put(`${API}/users/me`, form, {
+      const updated = await axios.put(`${API}/users/me`, payload, {
         headers: { "Content-Type": "application/json" } // qui ho cancellato "Authorization": "Bearer " + token, (perché dovrebbe già farlo l'interceptor, in caso rimettilo)
       });
 
@@ -214,7 +220,7 @@ export default function Profile() {
                     <input type="date" name="birthdate" value={form.birthdate} onChange={handleChange} className="input-field" style={getInputStyle('birthdate')} />
                     {fieldErrors.birthdate && (
                       <span style={{ color: '#dc3545', fontSize: '0.85rem', marginTop: '4px', display: 'block' }}>
-                        {fieldErrors.birthdate}
+                        Inserisci una data valida
                       </span>
                     )}
                 </div>

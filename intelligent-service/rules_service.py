@@ -2,9 +2,20 @@ from sqlalchemy import select
 from models import Rule
 import json
 
-CACHE_TTL_RULES_LIST = 30 * 60
+CACHE_TTL_RULES_LIST = 30 * 60 # Tempo di vita delle regole in cache in secondi (30 minuti)
 
 async def get_rules_for_field(field: str, db, redis=None):
+    """
+    Recupera le regole per un campo specifico dal database o dalla cache Redis.
+    Args:
+        field (str): Il campo per cui recuperare le regole.
+        db: La sessione del database.
+        redis: L'istanza Redis (opzionale).
+    Returns:
+        List[Rule]: Una lista di oggetti Rule, rappresentanti le regole per il campo specificato.
+    Raises:
+        Exception: Se si verifica un errore durante il recupero delle regole.
+    """
     
     cache_key = f"rules_list:{field}"
 
@@ -40,6 +51,15 @@ async def get_rules_for_field(field: str, db, redis=None):
     return rules_dict_list
 
 def violated_rule(condition: str, sensor_value: float, threshold: float) -> bool:
+    """
+    Verifica se una regola è violata in base alla condizione, al valore del sensore e alla soglia.
+    Args:
+        condition (str): La condizione della regola (es. ">", "<", "==").
+        sensor_value (float): Il valore del sensore da confrontare.
+        threshold (float): La soglia definita nella regola.
+    Returns:
+        bool: True se la regola è violata, False altrimenti.
+    """
     if condition == ">":
         return sensor_value > threshold
     elif condition == "<":

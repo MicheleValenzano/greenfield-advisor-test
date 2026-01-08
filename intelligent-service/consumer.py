@@ -11,6 +11,19 @@ from datetime import datetime, timezone
 ROUTING_KEY_PREFIX = "alerts."
 
 class RabbitMQIntelligentConsumer:
+    """
+    Consumer RabbitMQ per l'analisi intelligente dei messaggi.
+    Riceve messaggi da una coda, li elabora utilizzando IntelligentAnalyzer,
+    e pubblica eventuali alert generati su un exchange dedicato.
+    
+    Attributes:
+        rabbitmq_url (str): URL di connessione a RabbitMQ.
+        queue_name (str): Nome della coda da cui consumare i messaggi.
+        alerts_exchange_name (str): Nome dell'exchange per pubblicare gli alert.
+        analyzer (IntelligentAnalyzer): Istanza di IntelligentAnalyzer per l'analisi dei messaggi.
+        redis_url (str): URL di connessione a Redis.
+        redis_max_connections (int): Numero massimo di connessioni Redis.
+    """
     def __init__(self, rabbitmq_url: str, queue_name: str, alerts_exchange_name: str, analyzer: IntelligentAnalyzer, redis_url: str, redis_max_connections: int = 20):
         self.rabbitmq_url = rabbitmq_url
         self.queue_name = queue_name
@@ -25,6 +38,9 @@ class RabbitMQIntelligentConsumer:
         self.analyzer = analyzer
 
     async def connect(self):
+        """
+        Stabilisce la connessione a RabbitMQ e Redis, e prepara la coda e l'exchange.
+        """
         self.connection = await connect_robust(self.rabbitmq_url)
         self.channel = await self.connection.channel()
 
@@ -43,6 +59,11 @@ class RabbitMQIntelligentConsumer:
             self.redis = None
 
     async def handle_message(self, message: IncomingMessage):
+        """
+        Gestisce i messaggi in arrivo dalla coda RabbitMQ.
+        Esegue l'analisi del messaggio e pubblica eventuali alert generati.
+        Args:
+            message (IncomingMessage): Messaggio ricevuto dalla coda."""
         async with message.process(requeue=True):
             async with AsyncSessionLocal() as db:
                 try:
@@ -92,6 +113,9 @@ class RabbitMQIntelligentConsumer:
                     raise e
     
     async def close(self):
+        """
+        Chiude le connessioni a RabbitMQ e Redis.
+        """
         if self.redis:
             await self.redis.close()
         if self.connection:

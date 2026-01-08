@@ -3,15 +3,15 @@ services:
     build: ./auth-service
     restart: unless-stopped
     ports:
-      - "8001:8001"
+      - "${PORT_AUTH}:8001"
     environment:
       - DB_HOST=db-auth
       - POSTGRES_PORT=5432
-      - POSTGRES_USER=admin
-      - POSTGRES_PASSWORD=admin123
-      - POSTGRES_DB=greenfield_auth_db
-      - JWT_PRIVATE_KEY=secret_key
-      - JWT_PUBLIC_KEY=public_key
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${DB_NAME_AUTH}
+      - JWT_PRIVATE_KEY=${JWT_PRIVATE_KEY}
+      - JWT_PUBLIC_KEY=${JWT_PUBLIC_KEY}
     depends_on:
       - db-auth
     networks:
@@ -23,9 +23,9 @@ services:
     ports:
       - "5432:5432"
     environment:
-      - POSTGRES_USER=admin
-      - POSTGRES_PASSWORD=admin123
-      - POSTGRES_DB=greenfield_auth_db
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${DB_NAME_AUTH}
     volumes:
       - authdb_data:/var/lib/postgresql/data
     networks:
@@ -35,10 +35,10 @@ services:
     image: dpage/pgadmin4
     restart: unless-stopped
     environment:
-      - PGADMIN_DEFAULT_EMAIL=admin@admin.com
-      - PGADMIN_DEFAULT_PASSWORD=admin
+      - PGADMIN_DEFAULT_EMAIL=${PGADMIN_EMAIL}
+      - PGADMIN_DEFAULT_PASSWORD=${PGADMIN_PASSWORD}
     ports:
-      - "5050:80"
+      - "${PORT_PGADMIN}:80"
     volumes:
       - pgadmin_data:/var/lib/pgadmin
     networks:
@@ -48,7 +48,7 @@ services:
     image: redis:7-alpine
     restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "${PORT_REDIS_WEATHER}:6379"
     volumes:
       - redis_weather_data:/data
     networks:
@@ -58,10 +58,11 @@ services:
     build: ./weather-service
     restart: unless-stopped
     ports:
-      - "8002:8002"
+      - "${PORT_WEATHER}:8002"
     environment:
       - REDIS_URL=redis://redis-weather:6379
-      - WEATHER_API_KEY=99fc693444b2d18def913e888ffbf6b7
+      - WEATHER_API_KEY=${WEATHER_API_KEY}
+      - JWT_PUBLIC_KEY=${JWT_PUBLIC_KEY}
     depends_on:
       - redis-weather
     networks:
@@ -70,8 +71,10 @@ services:
   image-service:
     build: ./image-service
     restart: unless-stopped
+    environment:
+      - JWT_PUBLIC_KEY=${JWT_PUBLIC_KEY}
     ports:
-      - "8003:8003"
+      - "${PORT_IMAGE}:8003"
     networks:
       - greenfield-net
   
@@ -97,11 +100,11 @@ services:
     image: rabbitmq:3-management-alpine
     restart: unless-stopped
     environment:
-      - RABBITMQ_DEFAULT_USER=guest
-      - RABBITMQ_DEFAULT_PASS=guest
+      - RABBITMQ_DEFAULT_USER=${RABBITMQ_USER}
+      - RABBITMQ_DEFAULT_PASS=${RABBITMQ_PASS}
     ports:
       - "5672:5672"
-      - "15672:15672"
+      - "${PORT_RABBIT_MGMT}:15672"
     networks:
       - greenfield-net
     volumes:
@@ -116,11 +119,11 @@ services:
     build: ./iot-gateway
     restart: unless-stopped
     environment:
-      - MQTT_HOST=mqtt-broker
-      - MQTT_PORT=1883
-      - MQTT_TOPIC=sensors/+/+/+
-      - RABBITMQ_URL=amqp://guest:guest@rabbit-mq:5672/
-      - RABBITMQ_EXCHANGE=sensor_data.topic
+      - MQTT_HOST=${MQTT_HOST}
+      - MQTT_PORT=${MQTT_PORT}
+      - MQTT_TOPIC=${MQTT_TOPIC_PATTERN}
+      - RABBITMQ_URL=${RABBITMQ_URL}
+      - RABBITMQ_EXCHANGE=${RABBITMQ_SENSORS_EXCHANGE}
     stop_grace_period: 2s
     depends_on:
       rabbit-mq:
@@ -136,8 +139,8 @@ services:
     build: ./sensor-simulator
     restart: unless-stopped
     environment:
-      - MQTT_HOST=mqtt-broker
-      - MQTT_PORT=1883
+      - MQTT_HOST=${MQTT_HOST}
+      - MQTT_PORT=${MQTT_PORT}
     stop_grace_period: 2s
     depends_on:
       mqtt-broker:
@@ -151,17 +154,17 @@ services:
     build: ./field-service
     restart: unless-stopped
     ports:
-      - "8004:8004"
+      - "${PORT_FIELD}:8004"
     environment:
-      - RABBITMQ_URL=amqp://guest:guest@rabbit-mq:5672/
-      - RABBITMQ_FIELD_QUEUE=sensor_data.field.queue
+      - RABBITMQ_URL=${RABBITMQ_URL}
+      - RABBITMQ_FIELD_QUEUE=${RABBITMQ_FIELD_QUEUE}
       - DB_HOST=db-fields
       - POSTGRES_PORT=5432
-      - POSTGRES_USER=admin
-      - POSTGRES_PASSWORD=admin123
-      - POSTGRES_DB=greenfield_fields_db
-      - JWT_PUBLIC_KEY=public_key
-      - WEATHER_SERVICE_URL=http://weather-service:8002
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${DB_NAME_FIELDS}
+      - JWT_PUBLIC_KEY=${JWT_PUBLIC_KEY}
+      - WEATHER_SERVICE_URL=${URL_WEATHER_SERVICE}
     depends_on:
       rabbit-mq:
         condition: service_healthy
@@ -178,9 +181,9 @@ services:
     ports:
       - "5433:5432"
     environment:
-      - POSTGRES_USER=admin
-      - POSTGRES_PASSWORD=admin123
-      - POSTGRES_DB=greenfield_fields_db
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${DB_NAME_FIELDS}
     volumes:
       - fieldsdb_data:/var/lib/postgresql/data
     networks:
@@ -190,18 +193,18 @@ services:
     build: ./intelligent-service
     restart: unless-stopped
     ports:
-      - "8005:8005"
+      - "${PORT_INTELLIGENT}:8005"
     environment:
-      - RABBITMQ_URL=amqp://guest:guest@rabbit-mq:5672/
-      - RABBITMQ_INTELLIGENT_QUEUE=sensor_data.intelligent.queue
-      - RABBITMQ_ALERTS_EXCHANGE=alerts.topic
+      - RABBITMQ_URL=${RABBITMQ_URL}
+      - RABBITMQ_INTELLIGENT_QUEUE=${RABBITMQ_INTELLIGENT_QUEUE}
+      - RABBITMQ_ALERTS_EXCHANGE=${RABBITMQ_ALERTS_EXCHANGE}
       - DB_HOST=db-intelligent
       - POSTGRES_PORT=5432
-      - POSTGRES_USER=admin
-      - POSTGRES_PASSWORD=admin123
-      - POSTGRES_DB=greenfield_intelligent_db
-      - JWT_PUBLIC_KEY=public_key
-      - FIELD_SERVICE_URL=http://field-service:8004
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${DB_NAME_INTELLIGENT}
+      - JWT_PUBLIC_KEY=${JWT_PUBLIC_KEY}
+      - FIELD_SERVICE_URL=${URL_FIELD_SERVICE}
       - REDIS_URL=redis://redis-intelligent:6379
     depends_on:
       rabbit-mq:
@@ -221,9 +224,9 @@ services:
     ports:
       - "5434:5432"
     environment:
-      - POSTGRES_USER=admin
-      - POSTGRES_PASSWORD=admin123
-      - POSTGRES_DB=greenfield_intelligent_db
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${DB_NAME_INTELLIGENT}
     volumes:
       - intelligentdb_data:/var/lib/postgresql/data
     networks:
@@ -233,7 +236,7 @@ services:
     image: redis:7-alpine
     restart: unless-stopped
     ports:
-      - "6380:6379"
+      - "${PORT_REDIS_INTELLIGENT}:6379"
     volumes:
       - redis_intelligent_data:/data
     networks:
@@ -243,15 +246,12 @@ services:
     build: ./rabbit-infrastructure
     restart: "no"
     environment:
-      - RABBITMQ_URL=amqp://guest:guest@rabbit-mq:5672/
-      - RABBITMQ_SENSORS_EXCHANGE=sensor_data.topic
-      - RABBITMQ_ALERTS_EXCHANGE=alerts.topic
-      - RABBITMQ_FIELD_QUEUE=sensor_data.field.queue
-      - RABBITMQ_INTELLIGENT_QUEUE=sensor_data.intelligent.queue
-      # - RABBITMQ_READINGS_NOTIFICATION_QUEUE=sensor_data.notifications.queue (va nel servizio di notifica)
-      # - RABBITMQ_ALERTS_QUEUE=alerts.queue (va nel servizio di notifica)
-      - RABBITMQ_FIELD_ROUTING_KEY=field.*.device.*
-      # - RABBITMQ_ALERTS_ROUTING_KEY=alerts.* # VERIFICARE
+      - RABBITMQ_URL=${RABBITMQ_URL}
+      - RABBITMQ_SENSORS_EXCHANGE=${RABBITMQ_SENSORS_EXCHANGE}
+      - RABBITMQ_ALERTS_EXCHANGE=${RABBITMQ_ALERTS_EXCHANGE}
+      - RABBITMQ_FIELD_QUEUE=${RABBITMQ_FIELD_QUEUE}
+      - RABBITMQ_INTELLIGENT_QUEUE=${RABBITMQ_INTELLIGENT_QUEUE}
+      - RABBITMQ_FIELD_ROUTING_KEY=${RABBITMQ_FIELD_ROUTING_KEY}
     depends_on:
       rabbit-mq:
         condition: service_healthy
@@ -262,15 +262,15 @@ services:
     build: ./notification-service
     restart: unless-stopped
     ports:
-      - "8006:8006"
+      - "${PORT_NOTIFICATION}:8006"
     environment:
-      - RABBITMQ_URL=amqp://guest:guest@rabbit-mq:5672/
-      - RABBITMQ_SENSORS_EXCHANGE=sensor_data.topic
-      - RABBITMQ_ALERTS_EXCHANGE=alerts.topic
-      - RABBITMQ_FIELD_ROUTING_KEY=field.*.device.*
-      - RABBITMQ_ALERTS_ROUTING_KEY=alerts.*
-      - JWT_PUBLIC_KEY=public_key
-      - FIELD_SERVICE_URL=http://field-service:8004
+      - RABBITMQ_URL=${RABBITMQ_URL}
+      - RABBITMQ_SENSORS_EXCHANGE=${RABBITMQ_SENSORS_EXCHANGE}
+      - RABBITMQ_ALERTS_EXCHANGE=${RABBITMQ_ALERTS_EXCHANGE}
+      - RABBITMQ_FIELD_ROUTING_KEY=${RABBITMQ_FIELD_ROUTING_KEY}
+      - RABBITMQ_ALERTS_ROUTING_KEY=${RABBITMQ_ALERTS_ROUTING_KEY}
+      - JWT_PUBLIC_KEY=${JWT_PUBLIC_KEY}
+      - FIELD_SERVICE_URL=${URL_FIELD_SERVICE}
       - REDIS_URL=redis://redis-notifications:6379
     depends_on:
       rabbit-mq:
@@ -284,7 +284,7 @@ services:
     image: redis:7-alpine
     restart: unless-stopped
     ports:
-      - "6381:6379"
+      - "${PORT_REDIS_NOTIFICATIONS}:6379"
     volumes:
       - redis_notifications_data:/data
     networks:
@@ -294,15 +294,16 @@ services:
     build: ./api-gateway
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "${PORT_API_GATEWAY}:8000"
     environment:
-      - AUTH_SERVICE_URL=http://auth-service:8001
-      - WEATHER_SERVICE_URL=http://weather-service:8002
-      - IMAGE_SERVICE_URL=http://image-service:8003
-      - FIELD_SERVICE_URL=http://field-service:8004
-      - INTELLIGENT_SERVICE_URL=http://intelligent-service:8005
-      - NOTIFICATION_SERVICE_URL=ws://notification-service:8006
+      - AUTH_SERVICE_URL=${URL_AUTH_SERVICE}
+      - WEATHER_SERVICE_URL=${URL_WEATHER_SERVICE}
+      - IMAGE_SERVICE_URL=${URL_IMAGE_SERVICE}
+      - FIELD_SERVICE_URL=${URL_FIELD_SERVICE}
+      - INTELLIGENT_SERVICE_URL=${URL_INTELLIGENT_SERVICE}
+      - NOTIFICATION_SERVICE_URL=${URL_NOTIFICATION_SERVICE}
       - REDIS_URL=redis://redis-api-gateway:6379
+      - JWT_PUBLIC_KEY=${JWT_PUBLIC_KEY}
     depends_on:
       - auth-service
       - weather-service
@@ -317,7 +318,7 @@ services:
     image: redis:7-alpine
     restart: unless-stopped
     ports:
-      - "6382:6379"
+      - "${PORT_REDIS_API}:6379"
     volumes:
       - redis_api_gateway_data:/data
     networks:
@@ -327,9 +328,9 @@ services:
     build: ./frontend
     restart: unless-stopped
     ports:
-      - "5173:5173"
+      - "${PORT_FRONTEND}:5173"
     environment:
-      - REACT_APP_API_GATEWAY_URL=https://localhost:8000
+      - REACT_APP_API_GATEWAY_URL=${PUBLIC_API_GATEWAY_URL}
     depends_on:
       - api-gateway
     networks:

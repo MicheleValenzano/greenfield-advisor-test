@@ -3,11 +3,15 @@ import re
 from datetime import date, datetime
 from typing import Optional
 
-EMAIL_PATTERN = r"^[\w\.-]+@[\w\.-]+\.\w+$"
-PASSWORD_PATTERN = r"^(?=.*[A-Za-z])(?=.*\d)(?=.*[!@#$%^&*?])[A-Za-z\d!@#?$%^&*]{8,}$"
-PHONE_PATTERN = r"^\d{10}$"
+# Espressioni regolari per la validazione di email, password e numero di telefono
+EMAIL_PATTERN = r"^[\w\.-]+@[\w\.-]+\.\w+$" # Semplice pattern per email
+PASSWORD_PATTERN = r"^(?=.*[A-Za-z])(?=.*\d)(?=.*[!@#$%^&*?])[A-Za-z\d!@#?$%^&*]{8,}$" # Minimo 8 caratteri, almeno una lettera, un numero e un carattere speciale
+PHONE_PATTERN = r"^\d{10}$" # Numero di telefono di 10 cifre senza prefisso
 
 class UserBase(BaseModel):
+    """
+    Schema base per l'utente contenente email e password.
+    """
     email: EmailStr = Field(..., example="mario.rossi@example.com")
     password: str = Field(..., example="SecretPassword123?")
 
@@ -26,6 +30,9 @@ class UserBase(BaseModel):
         return value
 
 class UserAdditionalFields(BaseModel):
+    """
+    Schema per i campi aggiuntivi (opzionali) dell'utente come telefono, biografia, posizione e data di nascita.
+    """
     phone: Optional[str] = Field(None, example="1234567890")
     bio: Optional[str] = Field(None, example="Sono un agricoltore semplice.")
     location: Optional[str] = Field(None, example="Via Mola, Rutigliano, Italia")
@@ -44,6 +51,9 @@ class UserAdditionalFields(BaseModel):
         return value
 
 class UserRegister(UserBase):
+    """
+    Schema per la registrazione dell'utente: include il nome, oltre a email e password.
+    """
     name: str = Field(..., example="Mario Rossi")
 
     @field_validator("name")
@@ -56,9 +66,15 @@ class UserRegister(UserBase):
         return value
 
 class UserLogin(UserBase):
+    """
+    Schema per il login dell'utente, include email e password.
+    """
     pass
 
 class UserOutput(BaseModel):
+    """
+    Schema per l'output delle informazioni dell'utente.
+    """
     id: int
     name: str
     email: str
@@ -71,6 +87,9 @@ class UserOutput(BaseModel):
         orm_mode = True
 
 class UserPasswordUpdate(BaseModel):
+    """
+    Schema per l'aggiornamento della password dell'utente.
+    """
     current_password: str = Field(..., example="CurrentPassword123?")
     new_password: str = Field(..., example="NewSecretPassword123?")
 

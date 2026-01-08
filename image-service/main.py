@@ -9,31 +9,28 @@ import base64
 import os
 import jwt
 
+# Utilizzo del backend 'Agg' per matplotlib per evitare problemi in ambienti senza display
 plt.switch_backend('Agg')
 
+# Configurazione OAuth2 per ottenere il token jwt negli endpoint automaticamente
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
-PUBLIC_KEY = os.getenv("JWT_PUBLIC_KEY", "PUBLIC_KEY")
-PUBLIC_KEY = """-----BEGIN PUBLIC KEY-----
-MIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEApXtfAxVV015pQOx026do
-IkRAVcRW9VieD0DSvP4PxQl055CBnJh42DrdshKWNvfSJ98OxH5Hz9WGMQHit1hQ
-HJwAC0/bue2sa5HoaH/0o7eyFVYnui+3YrYOYO/a2zG4qiSmkVwvOy/L+uymaAjl
-Y4fGzcf8TRMWEUZ7A4pIhvTuSMgRDyobVVmoBiKzvbAPqs3ggP8Vmd//hXovaSww
-JugwkvSVQvDaeRjKk2ENbwrA85BxtblE/sA1OKN0RQo1jkOECKuhi9nPhrRrtMs8
-MChlLW9GrBagFZVFA9LCTCSAXIWlzQIWNhUlh96/ih12KG3ynuXxxuggF9GeWLUl
-jtTXJSY6LyHmsRUsgC17S7sTyIYXmW4gJj4qXWGeVqRwsPj+aWQBYyi5IyBXH7gV
-iqJT39xgWLl81dYpO7B0Jx4zIc9MfYltsXXUxFDRuOftDQKKJ4bKDIdbjko3giUC
-A2LY9dJjJXB4j5wovqVJnDU4vrdgGmxZklRoaQq0dkWlhGAH982cQ1A6mfEOsDgc
-yO5xVZNmlQ7cVuNjyZ1Wr1Hcc4UYNSibzx6Y+8C4/x6jBodBxHofAPYR/jrFoLAu
-ACgboGEVD48oNVAd7XRnjXcOvu+kvRhLjwO6VoOJeRfArPAkXmL7pelkqY5RFcvg
-h8XIDNY39jp5TDH4Pa8/Q8MCAwEAAQ==
------END PUBLIC KEY-----"""
+PUBLIC_KEY = os.getenv("JWT_PUBLIC_KEY", "PUBLIC_KEY").replace("\\n", "\n")
 
 ALGORITHM = "RS256"
 
 app = FastAPI(title="Image Service")
 
 def decode_access_token(jwt_token: str = Depends(oauth2_scheme)):
+    """
+    Decodifica e verifica il token di accesso JWT.
+    Args:
+        jwt_token (str): Il token JWT da decodificare.
+    Returns:
+        dict: Il payload decodificato del token JWT.
+    Raises:
+        HTTPException: Se il token è scaduto o non valido.
+    """
     try:
         payload = jwt.decode(jwt_token, PUBLIC_KEY, algorithms=[ALGORITHM])
         return payload
@@ -43,10 +40,25 @@ def decode_access_token(jwt_token: str = Depends(oauth2_scheme)):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token di accesso non valido.")
 
 def calculate_ndvi(red_band, nir_band):
+    """
+    Calcola l'indice NDVI a partire dalle bande Red e NIR.
+    Args:
+        red_band (np.ndarray): Banda Red dell'immagine.
+        nir_band (np.ndarray): Banda NIR dell'immagine.
+    Returns:
+        np.ndarray: Matrice NDVI calcolata.
+    """
     ndvi = (nir_band - red_band) / (nir_band + red_band + 1e-10)
     return ndvi
 
 def ndvi_to_png_with_legend(ndvi: np.ndarray) -> io.BytesIO:
+    """
+    Converte una matrice NDVI in un'immagine PNG con legenda.
+    Args:
+        ndvi (np.ndarray): Matrice NDVI.
+    Returns:
+        io.BytesIO: Buffer contenente l'immagine PNG.
+    """
     ndvi_normalidzed = (ndvi + 1) / 2
     ndvi_normalidzed = np.clip(ndvi_normalidzed, 0, 1)
 
@@ -71,9 +83,22 @@ def ndvi_to_png_with_legend(ndvi: np.ndarray) -> io.BytesIO:
     return buffer
 
 def png_to_base64(png_buffer: io.BytesIO) -> str:
+    """
+    Converte un'immagine PNG in una stringa base64.
+    Args:
+        png_buffer (io.BytesIO): Buffer contenente l'immagine PNG.
+    Returns:
+        str: Stringa base64 dell'immagine PNG.
+    """
     return base64.b64encode(png_buffer.getvalue()).decode('utf-8')
 
 def ndvi_description(ndvi: np.ndarray) -> str:
+    """
+    Fornisce una descrizione testuale basata sul valore medio dell'NDVI.
+    Args:
+        ndvi (np.ndarray): Matrice NDVI.
+    Returns:
+        str: Descrizione della vegetazione basata sull'NDVI medio."""
     mean_ndvi = np.nanmean(ndvi)
     if mean_ndvi < 0:
         return "La vegetazione è scarsa o assente."
@@ -87,33 +112,19 @@ def ndvi_description(ndvi: np.ndarray) -> str:
         return "La vegetazione è alta."
     else:
         return "La vegetazione è molto alta."
-
-"""
-@app.post("/compute-ndvi/png")
-async def compute_ndvi_png(file: UploadFile = File(...), token: dict = Depends(decode_access_token)):
-
-    if not file.filename.lower().endswith(('.tif', '.tiff')):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Tipo di file non valido. Sono amessi solo .tif e .tiff.")
-    
-    data = await file.read()
-
-    with MemoryFile(data) as memfile:
-        with memfile.open() as dataset:
-            if dataset.count < 4:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Il file TIFF deve contenere almeno 4 bande (inclusi Red e NIR).")
-            
-            red_band = dataset.read(3).astype('float32')
-            nir_band = dataset.read(4).astype('float32')
-
-    ndvi = calculate_ndvi(red_band, nir_band)
-    png_buffer = ndvi_to_png_with_legend(ndvi)
-    
-    png_buffer.seek(0)
-    return StreamingResponse(png_buffer, media_type="image/png")
-"""
     
 @app.post("/compute-ndvi")
 async def compute_ndvi(file: UploadFile = File(...), token: dict = Depends(decode_access_token)):
+    """
+    Calcola l'NDVI da un file TIFF caricato e restituisce l'immagine PNG codificata in base64 insieme a una descrizione testuale.
+    Args:
+        file (UploadFile): File TIFF caricato.
+        token (dict): Payload del token di accesso decodificato.
+    Returns:
+        dict: Dizionario contenente il nome del file, la descrizione, l'NDVI medio e l'immagine NDVI in formato base64.
+    Raises:
+        HTTPException: In caso di errori durante l'elaborazione del file.
+    """
     if not file.filename.lower().endswith(('.tif', '.tiff')):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Tipo di file non valido. Sono amessi solo .tif e .tiff.")
     

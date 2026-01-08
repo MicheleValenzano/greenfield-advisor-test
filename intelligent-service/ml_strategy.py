@@ -3,11 +3,25 @@ from contexts import MLAnalysisContext
 import numpy as np
 
 class MLStrategy(AnalysisStrategy):
+    """
+    Strategia di analisi basata su modelli di machine learning.
+    Utilizza un modello pre-addestrato (Random Forest) per effettuare previsioni sui dati forniti.
+
+    Attributes:
+        model: Il modello di machine learning pre-addestrato utilizzato per le previsioni
+    """
     def __init__(self, model):
         self.model = model
 
     async def analyze(self, context: MLAnalysisContext):
-
+        """
+        Esegue l'analisi utilizzando il modello di machine learning.
+        Args:
+            context (MLAnalysisContext): Il contesto contenente i dati per l'analisi.
+        Returns:
+            dict: Un dizionario contenente l'etichetta prevista e il punteggio di confidenza.
+        Raises:
+            ValueError: Se le feature non sono fornite o sono vuote."""
         features = context.payload["features"]
 
         if features is None:

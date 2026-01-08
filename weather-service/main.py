@@ -12,6 +12,7 @@ import jwt
 
 app = FastAPI(title="Weather Service")
 
+# Definizione di OAuth2PasswordBearer per ottenere il token JWT negli endpoint automaticamente
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis-weather:6379")
@@ -20,30 +21,26 @@ REDIS_MAX_CONNECTIONS = 20
 OPENWEATHER_API_KEY = os.getenv("WEATHER_API_KEY", "API_KEY")
 BASE_OPENWEATHER_URL = "http://api.openweathermap.org/data/2.5"
 
-CACHE_TTL_CURRENT_WEATHER = 5 * 60 # 5 minutes
-CACHE_TTL_FORECAST = 6 * 60 * 60  # 6 hours
+CACHE_TTL_CURRENT_WEATHER = 5 * 60 # Tempo di vita della cache per il meteo attuale: 5 minuti
+CACHE_TTL_FORECAST = 6 * 60 * 60  # Tempo di vita della cache per le previsioni meteo: 6 ore (poiché cambiano meno frequentemente)
 
+# Connessione Redis globale, utilizzata per il caching dei dati meteo (meteo attuale e previsioni)
 redis: aioredis.Redis = None
 
-PUBLIC_KEY = os.getenv("JWT_PUBLIC_KEY", "PUBLIC_KEY")
-PUBLIC_KEY = """-----BEGIN PUBLIC KEY-----
-MIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEApXtfAxVV015pQOx026do
-IkRAVcRW9VieD0DSvP4PxQl055CBnJh42DrdshKWNvfSJ98OxH5Hz9WGMQHit1hQ
-HJwAC0/bue2sa5HoaH/0o7eyFVYnui+3YrYOYO/a2zG4qiSmkVwvOy/L+uymaAjl
-Y4fGzcf8TRMWEUZ7A4pIhvTuSMgRDyobVVmoBiKzvbAPqs3ggP8Vmd//hXovaSww
-JugwkvSVQvDaeRjKk2ENbwrA85BxtblE/sA1OKN0RQo1jkOECKuhi9nPhrRrtMs8
-MChlLW9GrBagFZVFA9LCTCSAXIWlzQIWNhUlh96/ih12KG3ynuXxxuggF9GeWLUl
-jtTXJSY6LyHmsRUsgC17S7sTyIYXmW4gJj4qXWGeVqRwsPj+aWQBYyi5IyBXH7gV
-iqJT39xgWLl81dYpO7B0Jx4zIc9MfYltsXXUxFDRuOftDQKKJ4bKDIdbjko3giUC
-A2LY9dJjJXB4j5wovqVJnDU4vrdgGmxZklRoaQq0dkWlhGAH982cQ1A6mfEOsDgc
-yO5xVZNmlQ7cVuNjyZ1Wr1Hcc4UYNSibzx6Y+8C4/x6jBodBxHofAPYR/jrFoLAu
-ACgboGEVD48oNVAd7XRnjXcOvu+kvRhLjwO6VoOJeRfArPAkXmL7pelkqY5RFcvg
-h8XIDNY39jp5TDH4Pa8/Q8MCAwEAAQ==
------END PUBLIC KEY-----"""
+PUBLIC_KEY = os.getenv("JWT_PUBLIC_KEY", "PUBLIC_KEY").replace("\\n", "\n")
 
 ALGORITHM = "RS256"
 
 def decode_access_token(jwt_token: str = Depends(oauth2_scheme)):
+    """
+    Decodifica e verifica il token di accesso JWT.
+    Args:
+        jwt_token (str): Il token JWT da decodificare.
+    Returns:
+        dict: Il payload decodificato del token JWT.
+    Raises:
+        HTTPException: Se il token è scaduto o non valido.
+    """
     try:
         payload = jwt.decode(jwt_token, PUBLIC_KEY, algorithms=[ALGORITHM])
         return payload
@@ -54,17 +51,26 @@ def decode_access_token(jwt_token: str = Depends(oauth2_scheme)):
 
 @app.on_event("startup")
 async def startup_event():
+    """
+    Inizializza la connessione a Redis all'avvio dell'applicazione.
+    """
     global redis
     pool = ConnectionPool.from_url(REDIS_URL, max_connections=REDIS_MAX_CONNECTIONS)
     redis = aioredis.Redis(decode_responses=True, connection_pool=pool)
 
 @app.on_event("shutdown")
 async def shutdown_event():
+    """
+    Chiude la connessione a Redis alla chiusura dell'applicazione.
+    """
     global redis
     if redis:
         await redis.close()
 
 class CurrentWeatherResponse(BaseModel):
+    """
+    Modello di risposta per il meteo attuale.
+    """
     city: str = Field(..., description="Nome della città", example="Roma")
     temperature: float = Field(..., description="Temperatura attuale in gradi Celsius", example=22.5)
     min_temperature: int = Field(..., description="Temperatura minima in gradi Celsius", example=18)
@@ -73,6 +79,9 @@ class CurrentWeatherResponse(BaseModel):
     icon: str = Field(..., description="Codice icona rappresentativa delle condizioni meteo", example="01d")
 
 class DailyForecastResponse(BaseModel):
+    """
+    Modello di risposta per le previsioni meteo giornaliere.
+    """
     date: str = Field(..., description="Data della previsione", example="20 Dec")
     min_temperature: int = Field(..., description="Temperatura minima in gradi Celsius", example=8)
     max_temperature: int = Field(..., description="Temperatura massima in gradi Celsius", example=14)
@@ -80,7 +89,18 @@ class DailyForecastResponse(BaseModel):
 
 @app.get("/weather/current", response_model=CurrentWeatherResponse)
 async def get_current_weather(lat: float, lon: float, token: dict = Depends(decode_access_token)):
-    
+    """
+    Recupera il meteo attuale per una data posizione geografica (latitudine e longitudine).
+    Utilizza il caching con Redis per migliorare le prestazioni.
+    Args:
+        lat (float): Latitudine della posizione.
+        lon (float): Longitudine della posizione.
+        token (dict): Payload del token JWT decodificato.
+    Returns:
+        CurrentWeatherResponse: Dati meteo attuali.
+    Raises:
+        HTTPException: Se il servizio meteo non è disponibile o si verifica un errore.
+    """
     if not redis:
         print("Servizio Redis non disponibile.")
     
@@ -132,6 +152,18 @@ async def get_current_weather(lat: float, lon: float, token: dict = Depends(deco
 
 @app.get("/weather/forecast", response_model=list[DailyForecastResponse])
 async def get_weather_forecast(lat: float, lon: float, token: dict = Depends(decode_access_token)):
+    """
+    Recupera le previsioni meteo giornaliere per una data posizione geografica (latitudine e longitudine).
+    Utilizza il caching con Redis per migliorare le prestazioni.
+    Args:
+        lat (float): Latitudine della posizione.
+        lon (float): Longitudine della posizione.
+        token (dict): Payload del token JWT decodificato.
+    Returns:
+        list[DailyForecastResponse]: Elenco delle previsioni meteo giornaliere.
+    Raises:
+        HTTPException: Se il servizio meteo non è disponibile o si verifica un errore.
+    """
     if not redis:
         print("Servizio Redis non disponibile.")
     

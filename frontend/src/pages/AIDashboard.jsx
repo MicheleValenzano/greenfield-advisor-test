@@ -1,44 +1,63 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo, useRef } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import toast, { Toaster } from 'react-hot-toast';
 import { useAuth } from '../context/AuthContext';
 
-const API_GATEWAY_URL = "https://localhost:8080";
+const API_GATEWAY_URL = "https://localhost:8000";
+const WS_URL = "wss://localhost:8000/ws/notifications";
+
+const stringToColor = (str) => {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+        hash = str.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    const c = (hash & 0x00FFFFFF).toString(16).toUpperCase();
+    return '#' + '00000'.substring(0, 6 - c.length) + c;
+};
+
+const formatSensorName = (sensorType) => {
+    if (!sensorType) return "Sconosciuto";
+    return sensorType.replace(/_/g, ' ');
+}
 
 function AIDashboard() {
-    const { logout, token, selectedField } = useAuth();
+    const { token, selectedField } = useAuth();
     const navigate = useNavigate();
+
+    const ws = useRef(null);
+    const errorToastId = useRef(null);
     
-    // Stati
-    const [readings, setReadings] = useState([]);
+    // NOTA: Inizializziamo readings come oggetto vuoto {}, non array []
+    const [readings, setReadings] = useState({});
     const [aiResult, setAiResult] = useState(null);
     const [loadingAi, setLoadingAi] = useState(false);
-    const [selectedImage, setSelectedImage] = useState(null);
+
+    // Stati immagini
+    const [processedImage, setProcessedImage] = useState(null);
     const [imageAnalysis, setImageAnalysis] = useState(null);
     const [uploadingImg, setUploadingImg] = useState(false);
     const [loading, setLoading] = useState(true);
     const [showExplanation, setShowExplanation] = useState(false);
 
+    const HISTORY_LIMIT = 50;
+
     useEffect(() => { 
         if (!selectedField) navigate('/fields');
     }, [selectedField, navigate]);
 
-    const getAuthHeader = () => ({ headers: { Authorization: `Bearer ${token}` } });
-
     const fetchData = async () => {
         if (!selectedField) { setLoading(false); return; }
-        const fieldId = selectedField.id || selectedField._id;
-        if (!fieldId) { setLoading(false); return; }
+        const field = selectedField.field;
+        if (!field) { setLoading(false); return; }
 
         try {
-            const res = await axios.get(`${API_GATEWAY_URL}/sensors/readings?field_id=${fieldId}&limit=50`, getAuthHeader());
-            // Inverte l'array per avere i dati dal più vecchio al più nuovo (SX -> DX nel grafico)
-            setReadings([...res.data].reverse());
+            const res = await axios.get(`${API_GATEWAY_URL}/fields/${field}/latest-types-readings`);
+            // res.data è del tipo: { temperature: [...], humidity: [...] }
+            setReadings(res.data);
         } catch (e) { 
             console.error(e); 
-            if (e.response?.status === 401) logout(); 
         } finally {
             setLoading(false);
         }
@@ -46,149 +65,256 @@ function AIDashboard() {
 
     useEffect(() => {
         fetchData();
-        const i = setInterval(fetchData, 5000);
-        return () => clearInterval(i);
     }, [selectedField]);
 
-    const handleAskAI = async () => {
-        // Cerca l'ultima lettura valida (non necessariamente la prima dell'array se ci sono buchi)
-        // Ma per semplicità prendiamo l'ultima disponibile nel dataset invertito (quindi l'ultima cronologica)
-        if (!readings || readings.length === 0) {
-            toast.error("Nessun dato sensori disponibile per l'analisi.");
-            return;
+    // Gestione WebSocket per notifiche in tempo reale
+    useEffect(() => {
+        if (!token || !selectedField) return; // Se mancano i dati necessari, non si prova la connessione
+
+        let successToastId = null;
+
+        const connectWebSocket = () => {
+            const field_name = selectedField.field;
+
+            if (ws.current) {
+                ws.current.onclose = null; // Evita la riconnessione al momento della chiusura manuale
+                ws.current.close();
+            }
+
+            errorToastId.current = null;
+
+            const socket = new WebSocket(`${WS_URL}?token=${token}&field=${field_name}`);
+            ws.current = socket;
+
+            // All'apertura della socket
+            socket.onopen = () => {
+                if (errorToastId.current) {
+                    toast.dismiss(errorToastId.current);
+                    errorToastId.current = null;
+                }
+                successToastId = toast.success(`Connesso al sistema di notifica in tempo reale del campo ${selectedField.name}.`);
+            }
+
+            // Quando arriva un messaggio
+            socket.onmessage = (event) => {
+                try {
+                    console.log("Messaggio WebSocket ricevuto:", event.data);
+                    const response = JSON.parse(event.data);
+                    const { type, data } = response;
+
+                    // Gestione alert nuove letture
+                    if (type === 'reading') {
+                        const sensorType = data.sensor_type;
+                        setReadings(prevReadings => {
+                            const currentList = prevReadings[sensorType] || [];
+                            const updatedList = [data, ...currentList].slice(0, HISTORY_LIMIT); // Mantieni solo gli ultimi N elementi
+                            return { ...prevReadings, [sensorType]: updatedList };
+                        })
+                    }
+                    
+                    // Gestione nuovi allarmi
+                    if (type === 'alert') {
+                        toast.error(`⚠️ Nuovo allarme: ${data.message}\n(Tipo sensore: ${data.sensor_type})`, { duration: 3000 });
+                    }
+
+                } catch (err) {
+                    console.error("Errore parsing messaggio WebSocket:", err);
+                }
+            }
+
+            const handleConnectionLoss = () => {
+                if (errorToastId.current) return;
+                errorToastId.current = toast.error(<div onClick={() => window.location.reload()} style={{ cursor: 'pointer' }}><b>Connessione alle notifiche persa.</b><br/>Ricaricare la pagina</div>, { duration: Infinity, id: 'ws-error-toast' });
+            }
+
+            socket.onclose = (event) => {
+                console.log(`Connessione WebSocket chiusa pulitamente, codice=${event.code} motivo=${event.reason}`);
+
+                if (successToastId) {
+                    toast.dismiss(successToastId);
+                    successToastId = null;
+                }
+
+                handleConnectionLoss();
+            }
+
+            socket.onerror = (err) => {
+                console.error("Errore WebSocket:", err);
+            }
+        };
+
+        connectWebSocket();
+
+        return () => {
+            // Chiusura della connessione WebSocket
+            if (ws.current) {
+                ws.current.onclose = null; // Evita la riconnessione al momento della chiusura manuale
+                ws.current.close();
+            }
+
+            if (successToastId) {
+                toast.dismiss(successToastId);
+            }
         }
 
-        setLoadingAi(true);
-        setShowExplanation(false);
-        const loadingToast = toast.loading('L\'IA sta analizzando i dati...');
-        
-        try {
-            // Prendiamo l'ultimo elemento perché 'readings' è stato invertito per il grafico (Old -> New)
-            const latestReading = readings[readings.length - 1]; 
-            
-            const payload = { 
-                temperature: latestReading.temperature || 25.0, // Fallback safe
-                humidity: latestReading.humidity || 50.0,
-                soil_moisture: latestReading.soil_moisture || 40.0,
-                pressure: latestReading.pressure || 1013.0
-            };
+    }, [selectedField, token]);
 
-            const res = await axios.post(`${API_GATEWAY_URL}/intelligent/predict`, payload, getAuthHeader());
+    // --- LOGICA DI AGGREGAZIONE E PREPARAZIONE DATI GRAFICI ---
+    const chartsData = useMemo(() => {
+        if (!readings || Object.keys(readings).length === 0) return [];
+
+        // Iteriamo su ogni chiave (es. "temperature", "humidity")
+        return Object.keys(readings).map(sensorType => {
+            const rawData = readings[sensorType];
+            
+            // 1. Raggruppamento per timestamp (ignorando millisecondi)
+            const grouped = {};
+            let unit = ""; // Cerchiamo di catturare l'unità dal primo dato disponibile
+
+            rawData.forEach(item => {
+                if(!unit && item.unit) unit = item.unit;
+
+                const date = new Date(item.timestamp);
+                date.setSeconds(0);
+                date.setMilliseconds(0); // Rimuove i millisecondi
+                const timeKey = date.toISOString(); // Chiave univoca es: "2026-01-07T14:07:00.000Z"
+
+                if (!grouped[timeKey]) {
+                    grouped[timeKey] = { sum: 0, count: 0 };
+                }
+                grouped[timeKey].sum += item.value;
+                grouped[timeKey].count += 1;
+            });
+
+            // 2. Calcolo Media e creazione array per Recharts
+            const chartData = Object.entries(grouped).map(([timestamp, data]) => ({
+                timestamp,
+                value: Number((data.sum / data.count).toFixed(2)), // Media a 2 decimali
+                unit: unit
+            })).sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+            const dynamicColor = stringToColor(sensorType);
+            const dynamicTitle = `Trend ${formatSensorName(sensorType)}`;
+
+            return {
+                type: sensorType,
+                title: dynamicTitle,
+                color: dynamicColor,
+                data: chartData,
+                unit: unit || config.unit
+            };
+        });
+    }, [readings]);
+
+    const formatXAsis = (tickItem) => {
+        const date = new Date(tickItem);
+        return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+
+    // --- GESTIONE AI E IMMAGINI (Invariata) ---
+    const handleAskAI = async () => {
+        const field = selectedField.field;
+        if (!field) return toast.error("Seleziona campo");
+        setAiResult(null); setShowExplanation(false); setLoadingAi(true);
+        const loadingToast = toast.loading('L\'IA sta analizzando i dati...');
+        try {
+            const res = await axios.get(`${API_GATEWAY_URL}/ai-prediction`, { params: { field: field } });
             setAiResult(res.data);
             toast.success("Analisi completata", { id: loadingToast });
         } catch (error) { 
-            const msg = error.response?.data?.detail || "Errore analisi AI";
-            toast.error(msg, { id: loadingToast }); 
-        } finally { 
-            setLoadingAi(false); 
-        }
+            toast.error("Errore analisi AI", { id: loadingToast });
+        } finally { setLoadingAi(false); }
     };
 
     const handleImageUpload = async (e) => {
         const file = e.target.files[0];
         if (!file) return;
-        setSelectedImage(URL.createObjectURL(file));
-        setUploadingImg(true);
-        const loadingToast = toast.loading('Analisi drone in corso...');
+        setProcessedImage(null); setImageAnalysis(null); setUploadingImg(true);
+        const loadingToast = toast.loading('Elaborazione NDVI...');
         const formData = new FormData();
         formData.append('file', file);
         try {
-            const res = await axios.post(`${API_GATEWAY_URL}/images/analyze`, formData, { 
-                headers: { 'Content-Type': 'multipart/form-data', ...getAuthHeader().headers } 
-            });
-            setImageAnalysis(res.data);
-            toast.success("Analisi completata", { id: loadingToast });
-        } catch { toast.error("Errore upload immagine", { id: loadingToast }); } finally { setUploadingImg(false); }
+            const res = await axios.post(`${API_GATEWAY_URL}/compute-ndvi`, formData);
+            setProcessedImage(`data:image/png;base64,${res.data.ndvi_image_base64}`);
+            setImageAnalysis({ ndvi_index: res.data.mean_ndvi, vegetation_status: res.data.description, health_score: res.data.mean_ndvi });
+            toast.success("NDVI calcolato con successo", { id: loadingToast });
+        } catch(error) { toast.error("Errore upload", { id: loadingToast }); } 
+        finally { setUploadingImg(false); }
+    };
+
+    // Helper formatter tooltip
+    const formatTooltipDate = (label) => {
+        if (!label) return '';
+        return new Date(label).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     };
 
     return (
         <div className="page-container">
             <Toaster position="top-right" />
             
-            {/* HEADER BANNER - STILE VIOLA PER AI */}
-            <div className="glass-card" style={{ 
-                background: 'linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%)', 
-                color: 'white', 
-                marginBottom: '2rem',
-                border: 'none'
-            }}>
+            <div className="glass-card" style={{ background: 'linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%)', color: 'white', marginBottom: '2rem', border: 'none' }}>
                 <h2 style={{ margin: 0, fontSize: '2rem' }}>🧠 Intelligenza Artificiale</h2>
-                <p style={{ opacity: 0.9, marginTop: '0.5rem' }}>
-                    Analisi predittiva e visione computerizzata per il campo: <strong>{selectedField ? selectedField.name : '...'}</strong>
-                </p>
+                <p style={{ opacity: 0.9, marginTop: '0.5rem' }}>Analisi per il campo: <strong>{selectedField?.name}</strong></p>
             </div>
 
-            {loading ? <div style={{textAlign:'center', marginTop: '50px', color:'var(--text-muted)'}}>Caricamento dati in corso...</div> : (
+            {loading ? <div style={{textAlign:'center', marginTop:'50px'}}>Caricamento...</div> : (
                 <div className="split-layout">
                     
-                    {/* COLONNA SINISTRA: DATI STORICI (Charts) */}
+                    {/* COLONNA SINISTRA: GRAFICI DINAMICI */}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
                         
-                        {/* CHART 1: TEMP */}
-                        <div className="glass-card">
-                            <h3 style={{color:'#ef4444', marginTop:0, fontSize:'1.1rem'}}>🌡️ Trend Temperatura</h3>
-                            <ResponsiveContainer width="100%" height={160}>
-                                <AreaChart data={readings}>
-                                    <defs>
-                                        <linearGradient id="colorTemp" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#ef4444" stopOpacity={0.8}/><stop offset="95%" stopColor="#ef4444" stopOpacity={0}/></linearGradient>
-                                    </defs>
-                                    <CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.3} />
-                                    <XAxis dataKey="timestamp" tick={false} axisLine={false} />
-                                    <YAxis axisLine={false} tickLine={false} width={30} />
-                                    <Tooltip contentStyle={{ borderRadius:'12px' }} labelFormatter={(l)=>new Date(l).toLocaleTimeString()} />
-                                    {/* AGGIUNTO connectNulls={true} */}
-                                    <Area type="monotone" dataKey="temperature" stroke="#ef4444" fill="url(#colorTemp)" strokeWidth={2} connectNulls={true} />
-                                </AreaChart>
-                            </ResponsiveContainer>
-                        </div>
+                        {chartsData.length > 0 ? (
+                            chartsData.map((chart) => (
+                                <div key={chart.type} className="glass-card">
+                                    <h3 style={{ color: chart.color, marginTop: 0, fontSize: '1.1rem', textTransform: 'capitalize' }}>
+                                        {chart.title}
+                                    </h3>
+                                    <ResponsiveContainer width="100%" height={160}>
+                                        <AreaChart data={chart.data}>
+                                            <defs>
+                                                <linearGradient id={`color${chart.type}`} x1="0" y1="0" x2="0" y2="1">
+                                                    <stop offset="5%" stopColor={chart.color} stopOpacity={0.8}/>
+                                                    <stop offset="95%" stopColor={chart.color} stopOpacity={0}/>
+                                                </linearGradient>
+                                            </defs>
+                                            <CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.3} />
+                                            <XAxis dataKey="timestamp" tickFormatter={formatXAsis} axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#9ca3af' }} minTickGap={30} />
+                                            <YAxis axisLine={false} tickLine={false} width={30} domain={['auto', 'auto']} />
+                                            <Tooltip 
+                                                contentStyle={{ borderRadius: '12px' }} 
+                                                labelFormatter={formatTooltipDate}
+                                                formatter={(value) => [`${value} ${chart.unit}`, 'Media']}
+                                            />
+                                            <Area 
+                                                type="monotone" 
+                                                dataKey="value" 
+                                                stroke={chart.color} 
+                                                fill={`url(#color${chart.type})`} 
+                                                strokeWidth={2} 
+                                                connectNulls={true} 
+                                            />
+                                        </AreaChart>
+                                    </ResponsiveContainer>
+                                </div>
+                            ))
+                        ) : (
+                            <div className="glass-card" style={{textAlign:'center', color:'#6b7280'}}>
+                                Nessun dato storico recente disponibile per i grafici.
+                            </div>
+                        )}
 
-                        {/* CHART 2: HUMIDITY */}
-                        <div className="glass-card">
-                            <h3 style={{color:'#06b6d4', marginTop:0, fontSize:'1.1rem'}}>💧 Trend Umidità</h3>
-                            <ResponsiveContainer width="100%" height={160}>
-                                <AreaChart data={readings}>
-                                    <defs>
-                                        <linearGradient id="colorHum" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#06b6d4" stopOpacity={0.8}/><stop offset="95%" stopColor="#06b6d4" stopOpacity={0}/></linearGradient>
-                                    </defs>
-                                    <CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.3} />
-                                    <XAxis dataKey="timestamp" tick={false} axisLine={false} />
-                                    <YAxis domain={[0, 100]} axisLine={false} tickLine={false} width={30} />
-                                    <Tooltip contentStyle={{ borderRadius:'12px' }} labelFormatter={(l)=>new Date(l).toLocaleTimeString()} />
-                                    {/* AGGIUNTO connectNulls={true} */}
-                                    <Area type="monotone" dataKey="humidity" stroke="#06b6d4" fill="url(#colorHum)" strokeWidth={2} connectNulls={true} />
-                                </AreaChart>
-                            </ResponsiveContainer>
-                        </div>
-
-                        {/* CHART 3: SOIL */}
-                        <div className="glass-card">
-                            <h3 style={{color:'#d97706', marginTop:0, fontSize:'1.1rem'}}>🌱 Umidità Suolo</h3>
-                            <ResponsiveContainer width="100%" height={160}>
-                                <AreaChart data={readings}>
-                                    <defs>
-                                        <linearGradient id="colorSoil" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#d97706" stopOpacity={0.8}/><stop offset="95%" stopColor="#d97706" stopOpacity={0}/></linearGradient>
-                                    </defs>
-                                    <CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.3} />
-                                    <XAxis dataKey="timestamp" tick={false} axisLine={false} />
-                                    <YAxis domain={[0, 100]} axisLine={false} tickLine={false} width={30} />
-                                    <Tooltip contentStyle={{ borderRadius:'12px' }} labelFormatter={(l)=>new Date(l).toLocaleTimeString()} />
-                                    {/* AGGIUNTO connectNulls={true} */}
-                                    <Area type="monotone" dataKey="soil_moisture" stroke="#d97706" fill="url(#colorSoil)" strokeWidth={2} connectNulls={true} />
-                                </AreaChart>
-                            </ResponsiveContainer>
-                        </div>
                     </div>
 
-                    {/* COLONNA DESTRA: STRUMENTI AI */}
+                    {/* COLONNA DESTRA: STRUMENTI AI (Invariato nel layout, ma codice incluso per completezza) */}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
                         
-                        {/* 1. AI PREDICTOR */}
+                        {/* AI PREDICTOR */}
                         <div className="glass-card" style={{ border: '2px solid #ddd6fe', background: 'linear-gradient(to bottom right, #fff, #f5f3ff)' }}>
                             <div className="flex-between">
                                 <h3 style={{marginTop:0, color:'#6d28d9'}}>🔮 AI Advisor</h3>
                                 <span style={{fontSize:'1.5rem'}}>🤖</span>
                             </div>
-                            <p className="text-muted text-sm" style={{marginBottom:'1rem'}}>L'IA analizza i dati attuali (Temp, Umidità, Suolo) per suggerire interventi.</p>
+                            <p className="text-muted text-sm" style={{marginBottom:'1rem'}}>L'IA analizza i dati attuali per suggerire interventi.</p>
                             
                             <button onClick={handleAskAI} disabled={loadingAi} className="btn" style={{ background: '#7c3aed', color: 'white', width: '100%' }}>
                                 {loadingAi ? 'Elaborazione...' : 'Genera Previsione'}
@@ -202,11 +328,7 @@ function AIDashboard() {
                                             {(aiResult.confidence * 100).toFixed(0)}% Confidenza
                                         </span>
                                     </div>
-                                    
-                                    <p style={{fontSize:'0.95rem', color:'#4c1d95', lineHeight:'1.5', fontWeight: 500}}>
-                                        "{aiResult.advice}"
-                                    </p>
-
+                                    <p style={{fontSize:'0.95rem', color:'#4c1d95', lineHeight:'1.5', fontWeight: 500}}>"{aiResult.advice}"</p>
                                     <div style={{marginTop:'10px'}}>
                                         <button 
                                             onClick={() => setShowExplanation(!showExplanation)}
@@ -217,10 +339,23 @@ function AIDashboard() {
                                         
                                         {showExplanation && (
                                             <div style={{marginTop:'10px', background:'white', padding:'10px', borderRadius:'8px', fontSize:'0.85rem', color:'#6b7280', border:'1px solid #e5e7eb'}}>
-                                                <strong>Input Analizzati:</strong><br/>
-                                                🌡️ Temp: {aiResult.details?.input_received?.temperature}°C<br/>
-                                                💧 Umidità: {aiResult.details?.input_received?.humidity}%<br/>
-                                                🌱 Suolo: {aiResult.details?.input_received?.soil_moisture}%
+                                                <strong>Input Analizzati (Medie):</strong><br/>
+                                                
+                                                {aiResult.details?.input_recieved && Object.entries(aiResult.details.input_recieved).map(([k, data]) => {
+                                                    // Verifica se il dato è nel nuovo formato oggetto o nel vecchio formato (numero) per retrocompatibilità
+                                                    const value = data?.value !== undefined ? data.value : data;
+                                                    const unit = data?.unit || '';
+
+                                                    return (
+                                                        <div key={k} style={{textTransform:'capitalize'}}>
+                                                            • {k.replace('_', ' ')}: 
+                                                            {' '}
+                                                            <strong>
+                                                                {typeof value === 'number' ? value.toFixed(1) : value} {unit}
+                                                            </strong>
+                                                        </div>
+                                                    );
+                                                })}
                                             </div>
                                         )}
                                     </div>
@@ -228,13 +363,13 @@ function AIDashboard() {
                             )}
                         </div>
 
-                        {/* 2. DRONE VISION */}
+                        {/* DRONE VISION */}
                         <div className="glass-card">
                             <div className="flex-between">
-                                <h3 style={{color:'#059669', marginTop:0}}>🚁 Drone Vision</h3>
+                                <h3 style={{color:'#059669', marginTop:0}}>🚁 Drone Vision (NDVI)</h3>
                                 <span style={{fontSize:'1.5rem'}}>📸</span>
                             </div>
-                            <p className="text-muted text-sm">Carica una foto aerea per analizzare l'indice NDVI.</p>
+                            <p className="text-muted text-sm">Carica un file TIFF multispettrale (.tiff).</p>
                             
                             <div 
                                 style={{
@@ -243,18 +378,16 @@ function AIDashboard() {
                                     transition:'all 0.2s', marginTop:'1rem'
                                 }} 
                                 onClick={() => document.getElementById('imgUpload').click()}
-                                onMouseOver={(e) => e.currentTarget.style.background = 'rgba(236, 253, 245, 0.8)'}
-                                onMouseOut={(e) => e.currentTarget.style.background = 'rgba(236, 253, 245, 0.5)'}
                             >
-                                <input type="file" id="imgUpload" accept="image/*" style={{display:'none'}} onChange={handleImageUpload} />
+                                <input type="file" id="imgUpload" accept=".tif,.tiff" style={{display:'none'}} onChange={handleImageUpload} />
                                 <div style={{fontSize:'2rem', marginBottom:'0.5rem', color:'#059669'}}>☁️</div>
                                 <div style={{color:'#047857', fontWeight:'bold', fontSize:'0.9rem'}}>Clicca per caricare</div>
-                                <div style={{fontSize:'0.75rem', color:'#6b7280'}}>JPG/PNG Max 5MB</div>
                             </div>
 
-                            {selectedImage && (
+                            {processedImage && (
                                 <div style={{marginTop:'1rem', borderRadius:'12px', overflow:'hidden', border:'1px solid #e5e7eb'}}>
-                                    <img src={selectedImage} alt="Preview" style={{width:'100%', display:'block'}} />
+                                    <p style={{fontSize:'0.8rem', textAlign:'center', color:'#6b7280', marginBottom:'5px'}}>Mappa NDVI generata:</p>
+                                    <img src={processedImage} alt="Analisi NDVI" style={{width:'100%', display:'block'}} />
                                 </div>
                             )}
 
@@ -263,12 +396,6 @@ function AIDashboard() {
                                     <div className="flex-between" style={{borderBottom:'1px solid #d1fae5', paddingBottom:'0.5rem', marginBottom:'0.5rem'}}>
                                         <span style={{color:'#065f46', fontSize:'0.9rem'}}>NDVI Index</span> 
                                         <strong style={{color: '#047857'}}>{imageAnalysis.ndvi_index?.toFixed(3) || "N/A"}</strong>
-                                    </div>
-                                    <div className="flex-between" style={{borderBottom:'1px solid #d1fae5', paddingBottom:'0.5rem', marginBottom:'0.5rem'}}>
-                                        <span style={{color:'#065f46', fontSize:'0.9rem'}}>Salute</span> 
-                                        <strong style={{color: imageAnalysis.health_score < 50 ? '#dc2626' : '#059669'}}>
-                                            {imageAnalysis.health_score}%
-                                        </strong>
                                     </div>
                                     <div className="flex-between">
                                         <span style={{color:'#065f46', fontSize:'0.9rem'}}>Stato</span> 

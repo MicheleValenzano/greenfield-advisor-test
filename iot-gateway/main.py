@@ -17,14 +17,19 @@ MQTT_CLIENT_ID = "iot-gateway"
 
 SYSTEM_STATUS_TOPIC = "system/gateway/status"
 
-# Logica di validazione
 class PayloadValidationError(Exception):
+    """
+    Eccezione sollevata quando il payload non è valido.
+    """
     pass
 
 def validate_payload(payload: dict):
     """
     Verifica che il payload rispetti i requisiti minimi.
-    Solleva PayloadValidationError se i dati non sono validi.
+    Args:
+        payload (dict): Il payload da validare.
+    Raises:
+        PayloadValidationError: Se i dati non sono validi.
     """
 
     # Verifica la presenza dei campi obbligatori
@@ -66,6 +71,16 @@ def validate_payload(payload: dict):
 
 
 def mqtt_to_sensor_reading(mqtt_topic: str, payload: bytes) -> SensorReading:
+    """
+    Converte un messaggio MQTT in un'istanza di SensorReading.
+    Args:
+        mqtt_topic (str): Il topic MQTT del messaggio.
+        payload (bytes): Il payload del messaggio MQTT.
+    Returns:
+        SensorReading: L'istanza di SensorReading creata dal messaggio MQTT.
+    Raises:
+        ValueError: Se il messaggio MQTT non è valido.
+    """
     try:
         parts = mqtt_topic.split('/')
 
@@ -99,9 +114,13 @@ def mqtt_to_sensor_reading(mqtt_topic: str, payload: bytes) -> SensorReading:
     except Exception as e:
         raise ValueError(f"Errore durante la conversione del messaggio MQTT: {e}")
 
-publisher = RabbitMQPublisher(RABBITMQ_URL, RABBITMQ_EXCHANGE)
+publisher = RabbitMQPublisher(RABBITMQ_URL, RABBITMQ_EXCHANGE) # Publisher per RabbitMQ
 
 async def mqtt_loop():
+    """
+    Loop principale per la gestione dei messaggi MQTT.
+    Invia le letture valide a RabbitMQ tramite il publisher.
+    """
     async with Client(MQTT_HOST, MQTT_PORT, client_id=MQTT_CLIENT_ID, clean_session=False) as client:
         async with client.unfiltered_messages() as messages:
 
@@ -128,6 +147,9 @@ async def mqtt_loop():
                         print(f"Errore durante l'elaborazione del messaggio: {e}")
 
 async def run_mqtt():
+    """
+    Esegue il loop MQTT con gestione di eventuali riconnessioni.
+    """
     while True:
         try:
             await mqtt_loop()
@@ -139,6 +161,9 @@ async def run_mqtt():
             await asyncio.sleep(5)
 
 async def main():
+    """
+    Funzione principale per avviare il gateway IoT.
+    """
     await publisher.connect()
     try:
         await run_mqtt()

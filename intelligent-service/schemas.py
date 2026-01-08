@@ -1,8 +1,11 @@
 from pydantic import BaseModel, Field, field_validator
 
-admitted_conditions = {">", "<", "=="}
+admitted_conditions = {">", "<", "=="} # Condizioni ammesse per le regole
 
 class RuleCreation(BaseModel):
+    """
+    Modello per la creazione di una regola intelligente.
+    """
     sensor_type: str = Field(..., example="temperatura", description="Tipo di sensore a cui si applica la regola.")
     condition: str = Field(..., example=">", description="Condizione della regola, ad esempio '>', '<', '==', ecc...")
     threshold: float = Field(..., example=30.0, description="Valore soglia per attivare la regola.")
@@ -34,6 +37,9 @@ class RuleCreation(BaseModel):
         return value
 
 class RuleOutput(BaseModel):
+    """
+    Modello per l'output di una regola intelligente.
+    """
     rule_name: str
     sensor_type: str
     condition: str

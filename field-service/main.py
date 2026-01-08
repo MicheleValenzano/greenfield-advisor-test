@@ -26,29 +26,26 @@ WEATHER_SERVICE_URL = os.getenv("WEATHER_SERVICE_URL", "http://weather-service:8
 
 consumer: RabbitMQFieldConsumer = None
 
+# Pattern regex per validare il formato della posizione "città (latitudine, longitudine)"
 location_pattern = r"^\s*(.+?)\s*\(\s*([+-]?\d+(?:\.\d+)?)\s*,\s*([+-]?\d+(?:\.\d+)?)\s*\)\s*$"
 
-PUBLIC_KEY = os.getenv("JWT_PUBLIC_KEY", "PUBLIC_KEY")
-PUBLIC_KEY = """-----BEGIN PUBLIC KEY-----
-MIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEApXtfAxVV015pQOx026do
-IkRAVcRW9VieD0DSvP4PxQl055CBnJh42DrdshKWNvfSJ98OxH5Hz9WGMQHit1hQ
-HJwAC0/bue2sa5HoaH/0o7eyFVYnui+3YrYOYO/a2zG4qiSmkVwvOy/L+uymaAjl
-Y4fGzcf8TRMWEUZ7A4pIhvTuSMgRDyobVVmoBiKzvbAPqs3ggP8Vmd//hXovaSww
-JugwkvSVQvDaeRjKk2ENbwrA85BxtblE/sA1OKN0RQo1jkOECKuhi9nPhrRrtMs8
-MChlLW9GrBagFZVFA9LCTCSAXIWlzQIWNhUlh96/ih12KG3ynuXxxuggF9GeWLUl
-jtTXJSY6LyHmsRUsgC17S7sTyIYXmW4gJj4qXWGeVqRwsPj+aWQBYyi5IyBXH7gV
-iqJT39xgWLl81dYpO7B0Jx4zIc9MfYltsXXUxFDRuOftDQKKJ4bKDIdbjko3giUC
-A2LY9dJjJXB4j5wovqVJnDU4vrdgGmxZklRoaQq0dkWlhGAH982cQ1A6mfEOsDgc
-yO5xVZNmlQ7cVuNjyZ1Wr1Hcc4UYNSibzx6Y+8C4/x6jBodBxHofAPYR/jrFoLAu
-ACgboGEVD48oNVAd7XRnjXcOvu+kvRhLjwO6VoOJeRfArPAkXmL7pelkqY5RFcvg
-h8XIDNY39jp5TDH4Pa8/Q8MCAwEAAQ==
------END PUBLIC KEY-----"""
+PUBLIC_KEY = os.getenv("JWT_PUBLIC_KEY", "PUBLIC_KEY").replace("\\n", "\n")
 
 ALGORITHM = "RS256"
 
+# OAuth2 scheme per l'autenticazione. Permette di estrarre automaticamente il token JWT dalle richieste.
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
 def decode_access_token(jwt_token: str = Depends(oauth2_scheme)):
+    """
+    Decodifica e valida il token di accesso JWT utilizzando la chiave pubblica.
+    Args:
+        jwt_token (str): Token JWT da decodificare.
+    Returns:
+        dict: Payload decodificato del token JWT.
+    Raises:
+        HTTPException: Se il token è scaduto o non valido.
+    """
     try:
         payload = jwt.decode(jwt_token, PUBLIC_KEY, algorithms=[ALGORITHM])
         return payload
@@ -59,6 +56,13 @@ def decode_access_token(jwt_token: str = Depends(oauth2_scheme)):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """
+    Gestore del ciclo di vita dell'applicazione FastAPI. Inizializza i client HTTP e il consumer RabbitMQ all'avvio,
+    e li chiude alla terminazione dell'applicazione.
+
+    Args:
+        app (FastAPI): Istanza dell'applicazione FastAPI.
+    """
     app.state.weather_client = httpx.AsyncClient(base_url=WEATHER_SERVICE_URL, timeout=httpx.Timeout(5.0))
 
     headers = {"User-Agent": "FieldService/1.0"}
@@ -80,17 +84,39 @@ async def lifespan(app: FastAPI):
         await consumer.close()
         print("Connessione a RabbitMQ chiusa")
 
+# Crea l'app FastAPI con il gestore del ciclo di vita
 app = FastAPI(title="Field Service", lifespan=lifespan)
 
 def get_weather_client(request: Request) -> httpx.AsyncClient:
+    """
+    Ottiene il client HTTP asincrono per il servizio meteo dall'applicazione.
+    Args:
+        request (Request): Oggetto della richiesta FastAPI.
+    Returns:
+        httpx.AsyncClient: Client HTTP asincrono per il servizio meteo.
+    """
     return request.app.state.weather_client
 
-# AGGIUNTO
 def get_http_client(request: Request) -> httpx.AsyncClient:
+    """
+    Ottiene il client HTTP asincrono generico dall'applicazione.
+    Args:
+        request (Request): Oggetto della richiesta FastAPI.
+    Returns:
+        httpx.AsyncClient: Client HTTP asincrono generico.
+    """
     return request.app.state.http_client
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """
+    Gestore delle eccezioni per gli errori di validazione delle richieste (errori di validazione con codice 422).
+    Args:
+        request (Request): Oggetto della richiesta FastAPI.
+        exc (RequestValidationError): Eccezione di validazione delle richieste.
+    Returns:
+        JSONResponse: Risposta JSON con i dettagli degli errori di validazione.
+    """
     errors = exc.errors()
     formatted_errors = []
     for error in errors:
@@ -105,14 +131,36 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 @app.exception_handler(Exception)
 async def general_exception_handler(request: Request, exc: Exception):
+    """
+    Gestore delle eccezioni generiche per errori interni del server.
+    Args:
+        request (Request): Oggetto della richiesta FastAPI.
+        exc (Exception): Eccezione generica sollevata.
+    Returns:
+        JSONResponse: Risposta JSON con il messaggio di errore interno del server.
+    """
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content={"message": "Errore interno del server."},
     )
 
+@app.get("/fields/health", status_code=200)
+async def health_check():
+    return {"status": "ok"}
+
 @app.post("/fields", response_model=FieldOutput, status_code=201)
 async def create_field(field: FieldCreation, db: AsyncSession = Depends(get_db), token: dict = Depends(decode_access_token)):
-
+    """
+    Crea un nuovo campo agricolo associato all'utente autenticato.
+    Args:
+        field (FieldCreation): Dati del campo da creare.
+        db (AsyncSession): Sessione asincrona del database.
+        token (dict): payload del token JWT decodificato dell'utente autenticato.
+    Returns:
+        FieldOutput: Dati del campo creato.
+    Raises:
+        HTTPException: Se il formato della posizione è invalido o si verifica un errore durante la creazione.
+    """
     match = re.match(location_pattern, field.location)
 
     if not match:
@@ -147,6 +195,17 @@ async def create_field(field: FieldCreation, db: AsyncSession = Depends(get_db),
 
 @app.delete("/fields/{field_name}", status_code=200)
 async def delete_field(field_name: str, db: AsyncSession = Depends(get_db), token: dict = Depends(decode_access_token)):
+    """
+    Elimina un campo agricolo esistente associato all'utente autenticato.
+    Args:
+        field_name (str): Nome del campo da eliminare.
+        db (AsyncSession): Sessione asincrona del database.
+        token (dict): payload del token JWT decodificato dell'utente autenticato.
+    Returns:
+        dict: Messaggio di conferma dell'eliminazione del campo.
+    Raises:
+        HTTPException: Se il campo non viene trovato, l'utente non ha i permessi o si verifica un errore durante l'eliminazione.
+    """
     result = await db.execute(select(Field).where(Field.field == field_name))
     field = result.scalars().first()
     if not field:
@@ -166,6 +225,19 @@ async def delete_field(field_name: str, db: AsyncSession = Depends(get_db), toke
 
 @app.get("/fields/{field_name}/weather")
 async def get_field_weather(field_name: str, db: AsyncSession = Depends(get_db), token: dict = Depends(decode_access_token), weather_client: httpx.AsyncClient = Depends(get_weather_client), jwt_token: str = Depends(oauth2_scheme)):
+    """
+    Ottiene le informazioni meteo correnti e la previsioni meteo per un campo specifico.
+    Args:
+        field_name (str): Nome del campo di cui ottenere le informazioni meteo.
+        db (AsyncSession): Sessione asincrona del database.
+        token (dict): payload del token JWT decodificato dell'utente autenticato.
+        weather_client (httpx.AsyncClient): Client HTTP asincrono per il servizio meteo.
+        jwt_token (str): Token JWT dell'utente autenticato.
+    Returns:
+        dict: Informazioni meteo correnti e previsioni meteo per il campo specificato.
+    Raises:
+        HTTPException: Se il campo non viene trovato, l'utente non ha i permessi o si verificano errori di comunicazione con il servizio meteo.
+    """
     result = await db.execute(select(Field).where(Field.field == field_name))
     field = result.scalars().first()
     if not field:
@@ -201,6 +273,7 @@ async def get_field_weather(field_name: str, db: AsyncSession = Depends(get_db),
         except Exception:
             raise HTTPException(status_code=500, detail="Errore interno nel servizio meteo (forecast).")
 
+    # Eseguo le due richieste in parallelo grazie alla programmazione asincrona
     current_weather, forecast = await asyncio.gather(fetch_current(), fetch_forecast())    
 
     return {
@@ -211,6 +284,18 @@ async def get_field_weather(field_name: str, db: AsyncSession = Depends(get_db),
 
 @app.put("/fields/{field_name}", response_model=FieldOutput)
 async def update_field(field_name: str, field_update: FieldUpdate, db: AsyncSession = Depends(get_db), token: dict = Depends(decode_access_token)):
+    """
+    Aggiorna le informazioni di un campo esistente associato all'utente autenticato.
+    Args:
+        field_name (str): Nome del campo da aggiornare.
+        field_update (FieldUpdate): Dati aggiornati del campo.
+        db (AsyncSession): Sessione asincrona del database.
+        token (dict): payload del token JWT decodificato dell'utente autenticato.
+    Returns:
+        FieldOutput: Dati del campo aggiornato.
+    Raises:
+        HTTPException: Se il campo non viene trovato o l'utente non ha i permessi.
+    """
     result = await db.execute(select(Field).where(Field.field == field_name))
     field = result.scalars().first()
     if not field:
@@ -235,12 +320,33 @@ async def update_field(field_name: str, field_update: FieldUpdate, db: AsyncSess
 
 @app.get("/fields", response_model=list[FieldOutput])
 async def get_all_fields(db: AsyncSession = Depends(get_db), token: dict = Depends(decode_access_token)):
+    """
+    Recupera tutti i campi associati all'utente autenticato.
+    Args:
+        db (AsyncSession): Sessione asincrona del database.
+        token (dict): payload del token JWT decodificato dell'utente autenticato.
+    Returns:
+        list[FieldOutput]: Lista di campi associati all'utente.
+    Raises:
+        HTTPException: Se si verifica un errore durante il recupero dei campi.
+    """
     result = await db.execute(select(Field).where(Field.owner_id == token["sub"]))
     fields = result.scalars().all()
     return [f for f in fields]
 
 @app.post("/sensor-types", status_code=201, response_model=SensorTypeCreation)
 async def create_sensor_type(sensor_type: SensorTypeCreation, db: AsyncSession = Depends(get_db), token: dict = Depends(decode_access_token)):
+    """
+    Crea un nuovo tipo di sensore associato all'utente autenticato.
+    Args:
+        sensor_type (SensorTypeCreation): Dati del tipo di sensore da creare.
+        db (AsyncSession): Sessione asincrona del database.
+        token (dict): payload del token JWT decodificato dell'utente autenticato.
+    Returns:
+        SensorTypeCreation: Dati del tipo di sensore creato.
+    Raises:
+        HTTPException: Se il tipo di sensore esiste già o si verifica un errore durante la creazione.
+    """
     result = await db.execute(select(SensorType).where(SensorType.type_name == sensor_type.type_name, SensorType.owner_id == token["sub"]))
     existing_type = result.scalars().first()
     if existing_type:
@@ -265,6 +371,17 @@ async def create_sensor_type(sensor_type: SensorTypeCreation, db: AsyncSession =
 
 @app.delete("/sensor-types/{sensor_name}", status_code=200)
 async def delete_sensor_type(sensor_name: str, db: AsyncSession = Depends(get_db), token: dict = Depends(decode_access_token)):
+    """
+    Elimina un tipo di sensore esistente associato all'utente autenticato.
+    Args:
+        sensor_name (str): Nome del tipo di sensore da eliminare.
+        db (AsyncSession): Sessione asincrona del database.
+        token (dict): payload del token JWT decodificato dell'utente autenticato.
+    Returns:
+        dict: Messaggio di conferma dell'eliminazione del tipo di sensore.
+    Raises:
+        HTTPException: Se il tipo di sensore non viene trovato, l'utente non ha i permessi o si verifica un errore durante l'eliminazione.
+    """
     result = await db.execute(select(SensorType).where(SensorType.sensor == sensor_name))
     sensor_type = result.scalars().first()
     if not sensor_type:
@@ -284,12 +401,32 @@ async def delete_sensor_type(sensor_name: str, db: AsyncSession = Depends(get_db
 
 @app.get("/sensor-types", response_model=list[SensorTypeOutput])
 async def get_sensor_types(db: AsyncSession = Depends(get_db), token: dict = Depends(decode_access_token)):
+    """
+    Recupera tutti i tipi di sensori associati all'utente autenticato.
+    Args:
+        db (AsyncSession): Sessione asincrona del database.
+        token (dict): payload del token JWT decodificato dell'utente autenticato.
+    Returns:
+        list[SensorTypeOutput]: Lista di tipi di sensori associati all'utente.
+    Raises:
+        HTTPException: Se si verifica un errore durante il recupero dei tipi di sensori"""
     result = await db.execute(select(SensorType).where(SensorType.owner_id == token["sub"]))
     sensor_types = result.scalars().all()
     return [s for s in sensor_types]
 
 @app.get("/fields/{field_name}/sensors", response_model=list[SensorInFieldOutput])
 async def get_sensors_in_field(field_name: str, db: AsyncSession = Depends(get_db), token: dict = Depends(decode_access_token)):
+    """
+    Recupera tutti i sensori associati a un campo specifico dell'utente autenticato.
+    Args:
+        field_name (str): Nome del campo di cui recuperare i sensori.
+        db (AsyncSession): Sessione asincrona del database.
+        token (dict): payload del token JWT decodificato dell'utente autenticato.
+    Returns:
+        list[SensorInFieldOutput]: Lista di sensori associati al campo specificato.
+    Raises:
+        HTTPException: Se il campo non viene trovato o l'utente non ha i permessi per visualizzarlo.
+    """
     result = await db.execute(select(Field).where(Field.field == field_name))
     field = result.scalars().first()
     if not field:
@@ -304,6 +441,18 @@ async def get_sensors_in_field(field_name: str, db: AsyncSession = Depends(get_d
 
 @app.post("/fields/{field_name}/sensors", status_code=201, response_model=SensorInFieldOutput)
 async def add_sensor_to_field(field_name: str, sensor: NewSensorInField, db: AsyncSession = Depends(get_db), token: dict = Depends(decode_access_token)):
+    """
+    Aggiunge un nuovo sensore a un campo specifico dell'utente autenticato.
+    Args:
+        field_name (str): Nome del campo a cui aggiungere il sensore.
+        sensor (NewSensorInField): Dati del sensore da aggiungere.
+        db (AsyncSession): Sessione asincrona del database.
+        token (dict): payload del token JWT decodificato dell'utente autenticato.
+    Returns:
+        SensorInFieldOutput: Dati del sensore aggiunto al campo.
+    Raises:
+        HTTPException: Se il campo o il tipo di sensore non vengono trovati, l'utente non ha i permessi, viene inserito un sensore duplicato (con lo stesso ID) o si verifica un errore durante l'aggiunta del sensore.
+    """
     result = await db.execute(select(Field).where(Field.field == field_name))
     field = result.scalars().first()
     if not field:
@@ -344,7 +493,18 @@ async def add_sensor_to_field(field_name: str, sensor: NewSensorInField, db: Asy
 
 @app.delete("/fields/{field_name}/sensors/{sensor_id}", status_code=200)
 async def delete_sensor_from_field(field_name: str, sensor_id: str, db: AsyncSession = Depends(get_db), token: dict = Depends(decode_access_token)):
-
+    """
+    Elimina un sensore da un campo specifico dell'utente autenticato.
+    Args:
+        field_name (str): Nome del campo da cui eliminare il sensore.
+        sensor_id (str): ID del sensore da eliminare.
+        db (AsyncSession): Sessione asincrona del database.
+        token (dict): payload del token JWT decodificato dell'utente autenticato.
+    Returns:
+        dict: Messaggio di conferma dell'eliminazione del sensore dal campo.
+    Raises:
+        HTTPException: Se il campo o il sensore non vengono trovati, l'utente non ha i permessi o si verifica un errore durante l'eliminazione del sensore.
+    """
     # trovo la field
     result = await db.execute(select(Field).where(Field.field == field_name))
     field = result.scalars().first()
@@ -373,6 +533,18 @@ async def delete_sensor_from_field(field_name: str, sensor_id: str, db: AsyncSes
 
 @app.get("/fields/{field_name}/readings", response_model=list[SensorReadingOutput])
 async def get_field_sensor_readings(field_name: str, limit: int = 10, db: AsyncSession = Depends(get_db), token: dict = Depends(decode_access_token)):
+    """
+    Ottiene le ultime rilevazioni dei sensori per un campo specifico dell'utente autenticato.
+    Args:
+        field_name (str): Nome del campo di cui ottenere le rilevazioni dei sensori.
+        limit (int): Numero massimo di rilevazioni da restituire (default: 10).
+        db (AsyncSession): Sessione asincrona del database.
+        token (dict): payload del token JWT decodificato dell'utente autenticato.
+    Returns:
+        list[SensorReadingOutput]: Lista delle ultime rilevazioni dei sensori per il campo specificato.
+    Raises:
+        HTTPException: Se il campo non viene trovato o l'utente non ha i permessi per visualizzarlo.
+    """
     result = await db.execute(select(Field).where(Field.field == field_name))
     field = result.scalars().first()
     if not field:
@@ -393,6 +565,18 @@ async def get_field_sensor_readings(field_name: str, limit: int = 10, db: AsyncS
 # Ottengo tutte le rilevazioni raggruppate per tipo di sensore
 @app.get("/fields/{field_name}/latest-types-readings")
 async def get_last_readings_by_sensor_type(field_name: str, limit: int = 50, db: AsyncSession = Depends(get_db), token: dict = Depends(decode_access_token)):
+    """
+    Ottiene le ultime rilevazioni dei sensori raggruppate per tipo di sensore per un campo specifico dell'utente autenticato.
+    Args:
+        field_name (str): Nome del campo di cui ottenere le rilevazioni dei sensori.
+        limit (int): Numero massimo di rilevazioni per tipo di sensore da restituire (default: 50).
+        db (AsyncSession): Sessione asincrona del database.
+        token (dict): payload del token JWT decodificato dell'utente autenticato.
+    Returns:
+        dict: Rilevazioni dei sensori raggruppate per tipo di sensore per il campo specificato.
+    Raises:
+        HTTPException: Se il campo non viene trovato o l'utente non ha i permessi per visualizzarlo.
+    """
     result = await db.execute(select(Field).where(Field.field == field_name))
     field_obj = result.scalars().first()
     if not field_obj:
@@ -439,6 +623,19 @@ async def get_last_readings_by_sensor_type(field_name: str, limit: int = 50, db:
 
 @app.put("/fields/{field_name}/sensors/{sensor_id}/change_state", status_code=200)
 async def activate_deactivate_sensor(field_name: str, sensor_id: str, active: bool, db: AsyncSession = Depends(get_db), token: dict = Depends(decode_access_token)):
+    """
+    Attiva o disattiva un sensore in un campo specifico dell'utente autenticato.
+    Args:
+        field_name (str): Nome del campo in cui si trova il sensore.
+        sensor_id (str): ID del sensore da attivare o disattivare.
+        active (bool): Stato da impostare (True per attivare, False per disattivare).
+        db (AsyncSession): Sessione asincrona del database.
+        token (dict): payload del token JWT decodificato dell'utente autenticato.
+    Returns:
+        dict: Messaggio di conferma dell'attivazione o disattivazione del sensore.
+    Raises:
+        HTTPException: Se il campo o il sensore non vengono trovati, l'utente non ha i permessi o si verifica un errore durante l'aggiornamento dello stato del sensore.
+    """
     result = await db.execute(select(Field).where(Field.field == field_name))
     field = result.scalars().first()
     if not field:
@@ -468,6 +665,18 @@ async def activate_deactivate_sensor(field_name: str, sensor_id: str, active: bo
 
 @app.get("/internal/validate-rule")
 async def validate_rule_internal(field: str, sensor_type: str, user_id: int, db: AsyncSession = Depends(get_db)):
+    """
+    Verifica se una regola può essere applicata a un campo specifico per un utente specifico.
+    Args:
+        field (str): Nome del campo.
+        sensor_type (str): Tipo di sensore.
+        user_id (int): ID dell'utente.
+        db (AsyncSession): Sessione asincrona del database.
+    Returns:
+        dict: Messaggio di conferma della validità della regola.
+    Raises:
+        HTTPException: Se il campo o il tipo di sensore non vengono trovati o l'utente non ha i permessi.
+    """
     
     result = await db.execute(select(Field).where(Field.field == field))
     field = result.scalars().first()
@@ -486,6 +695,19 @@ async def validate_rule_internal(field: str, sensor_type: str, user_id: int, db:
 
 @app.get("/fields/{field_name}/specific-types-readings")
 async def get_specific_types_readings(field_name: str, sensor_types: List[str] = Query(...), limit: int = 50, db: AsyncSession = Depends(get_db), token: dict = Depends(decode_access_token)):
+    """
+    Ottiene le ultime rilevazioni dei sensori per tipi di sensori specifici in un campo specifico dell'utente autenticato.
+    Args:
+        field_name (str): Nome del campo di cui ottenere le rilevazioni dei sensori.
+        sensor_types (List[str]): Lista di tipi di sensori di cui ottenere le rilevazioni.
+        limit (int): Numero massimo di rilevazioni per tipo di sensore da restituire (default: 50).
+        db (AsyncSession): Sessione asincrona del database.
+        token (dict): payload del token JWT decodificato dell'utente autenticato.
+    Returns:
+        dict: Rilevazioni dei sensori per i tipi di sensori specificati per il campo specificato.
+    Raises:
+        HTTPException: Se il campo non viene trovato o l'utente non ha i permessi per visualizzarlo.
+    """
     result = await db.execute(select(Field).where(Field.field == field_name))
     field = result.scalars().first()
     if not field:
@@ -543,6 +765,17 @@ async def get_specific_types_readings(field_name: str, sensor_types: List[str] =
 
 @app.get("/internal/validate-field-owner")
 async def validate_field_owner_internal(field_name: str, db: AsyncSession = Depends(get_db), token: dict = Depends(decode_access_token)):
+    """
+    Verifica se l'utente autenticato è il proprietario di un campo specifico.
+    Args:
+        field_name (str): Nome del campo.
+        db (AsyncSession): Sessione asincrona del database.
+        token (dict): payload del token JWT decodificato dell'utente autenticato.
+    Returns:
+        dict: Messaggio di conferma della proprietà del campo.
+    Raises:
+        HTTPException: Se il campo non viene trovato o l'utente non è il proprietario del campo.
+    """
     result = await db.execute(select(Field).where(Field.field == field_name))
     field_object = result.scalars().first()
     if not field_object:
@@ -609,3 +842,40 @@ async def search_geocoding(name: str, count: int = 5, http_client: httpx.AsyncCl
         raise HTTPException(status_code=503, detail="Servizio di geocoding non disponibile.")
     except httpx.HTTPStatusError:
         raise HTTPException(status_code=500, detail="Errore nel servizio di geocoding.")
+
+@app.get("/fields/all-sensors")
+async def get_all_sensors_public(db: AsyncSession = Depends(get_db)):
+    """
+    Recupera tutti i sensori di tutti i campi (endpoint pubblico per la generazione dei dati).
+    Returns:
+        lista dei sensori di tutti i campi, raggruppati per campo.
+    Raises:
+        HTTPException: Se si verifica un errore durante il recupero dei sensori.
+    """
+    
+    stmt = (
+        select(
+            FieldSensors.field_name,
+            FieldSensors.sensor_id,
+            FieldSensors.sensor_type,
+            SensorType.unit
+        )
+        .join(SensorType,
+              SensorType.id == FieldSensors.sensor_type_id
+        )
+        .where(FieldSensors.active == True)
+    )
+
+    result = await db.execute(stmt)
+    rows = result.all()
+
+    sensors_by_field = defaultdict(list)
+
+    for field_name, sensor_id, sensor_type, unit in rows:
+        sensors_by_field[field_name].append({
+            "sensor_id": sensor_id,
+            "sensor_type": sensor_type,
+            "unit": unit
+        })
+    
+    return sensors_by_field

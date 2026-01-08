@@ -3,9 +3,13 @@ from typing import Optional
 from datetime import date, datetime
 import re
 
+# Espressione regolare pattern per validare la posizione geografica nel formato "Città (latitudine, longitudine)"
 LOCATION_PATTERN = r"^[A-Za-zÀ-ÖØ-öø-ÿ' -]+ \((-?\d+(?:\.\d+)?), (-?\d+(?:\.\d+)?)\)$"
 
 class FieldCreation(BaseModel):
+    """
+    Modello per la creazione di un nuovo campo.
+    """
     name: str = Field(..., example="Vigna Nord", description="Nome del campo")
     location: str = Field(..., example="Rutigliano (41.1234, 16.1234)", description="Posizione geografica del campo nel formato 'Città (latitudine, longitudine)'")
     cultivation_type: str = Field(..., example="Uva da tavola", description="Tipo di coltivazione presente nel campo")
@@ -51,6 +55,9 @@ class FieldCreation(BaseModel):
         return value
 
 class FieldOutput(BaseModel):
+    """
+    Modello per l'output delle informazioni di un campo.
+    """
     field: str = Field(..., example="field123456", description="Identificativo univoco del campo")
     name: str = Field(..., example="Vigna Nord", description="Nome del campo")
     city: str = Field(..., example="Rutigliano", description="Posizione geografica del campo nel formato")
@@ -63,6 +70,10 @@ class FieldOutput(BaseModel):
         orm_mode = True
 
 class FieldUpdate(BaseModel):
+    """
+    Modello per l'aggiornamento delle informazioni di un campo.
+    Tutti i campi sono opzionali.
+    """
     name: Optional[str] = Field(None, example="Vigna Sud", description="Nome del campo")
     cultivation_type: Optional[str] = Field(None, example="Uva da tavola", description="Tipo di coltivazione presente nel campo")
     size: Optional[float] = Field(None, example=3.0, description="Dimensione del campo in ettari")
@@ -93,6 +104,9 @@ class FieldUpdate(BaseModel):
         return value
 
 class SensorTypeCreation(BaseModel):
+    """
+    Modello per la creazione di un nuovo tipo di sensore.
+    """
     type_name: str = Field(..., example="temperatura", description="Tipo di sensore, ad esempio 'temperatura', 'umidità', ecc...")
     description: Optional[str] = Field(None, example="Sensore per misurare la temperatura dell'aria", description="Descrizione del sensore")
     unit: str = Field(..., example="°C", description="Unità di misura del sensore, ad esempio '°C', '%', ecc...")
@@ -101,6 +115,9 @@ class SensorTypeCreation(BaseModel):
         orm_mode = True
 
 class SensorTypeOutput(BaseModel):
+    """
+    Modello per l'output delle informazioni di un tipo di sensore.
+    """
     sensor: str = Field(..., example="sensor1234", description="Identificativo univoco della tipologia di sensore")
     type_name: str = Field(..., example="temperatura", description="Tipo di sensore, ad esempio 'temperatura', 'umidità', ecc...")
     description: Optional[str] = Field(None, example="Sensore per misurare la temperatura dell'aria", description="Descrizione del sensore")
@@ -110,6 +127,9 @@ class SensorTypeOutput(BaseModel):
         orm_mode = True
 
 class NewSensorInField(BaseModel):
+    """
+    Modello per l'aggiunta di un nuovo sensore in un campo.
+    """
     sensor_id: str = Field(..., example="sensor1234", description="Identificativo univoco del sensore")
     sensor_type: str = Field(..., example="temperatura", description="Tipo di sensore, ad esempio 'temperatura', 'umidità', ecc...")
     location: str = Field(..., example="Nord Est", description="Posizione del sensore all'interno del campo")
@@ -143,6 +163,9 @@ class NewSensorInField(BaseModel):
         orm_mode = True
 
 class SensorInFieldOutput(BaseModel):
+    """
+    Modello per l'output delle informazioni di un sensore in un campo.
+    """
     sensor_id: str = Field(..., example="sensor1234", description="Identificativo univoco del sensore")
     sensor_type: str = Field(..., example="temperatura", description="Tipo di sensore, ad esempio 'temperatura', 'umidità', ecc...")
     location: str = Field(..., example="Nord Est", description="Posizione del sensore all'interno del campo")
@@ -151,6 +174,9 @@ class SensorInFieldOutput(BaseModel):
         orm_mode = True
 
 class SensorReadingOutput(BaseModel):
+    """
+    Modello per l'output delle letture di un sensore.
+    """
     sensor_id: str = Field(..., example="sensor1234", description="Identificativo univoco del sensore")
     sensor_type: str = Field(..., example="temperatura", description="Tipo di sensore, ad esempio 'temperatura', 'umidità', ecc...")
     value: float = Field(..., example=23.5, description="Valore della lettura del sensore")
