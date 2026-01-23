@@ -1,4 +1,3 @@
-// frontend/src/App.jsx
 import { Routes, Route, Navigate } from 'react-router-dom';
 import Login from './pages/Login';
 import Register from './pages/Register';
@@ -6,9 +5,9 @@ import FieldManager from './pages/FieldManager';
 import Dashboard from './pages/Dashboard';
 import Monitoring from './pages/Monitoring';
 import AIDashboard from './pages/AIDashboard';
-import SensorTypeManager from './pages/SensorTypeManager'; // <--- IMPORTA QUI
+import SensorTypeManager from './pages/SensorTypeManager';
 import Profile from './pages/Profile';
-import { ProtectedRoute } from './context/AuthContext'; // Importa quello aggiornato
+import { ProtectedRoute } from './context/AuthContext';
 import MainLayout from './layouts/MainLayout';
 
 function App() {

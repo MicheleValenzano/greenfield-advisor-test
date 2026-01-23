@@ -7,7 +7,7 @@ import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 import toast, { Toaster } from 'react-hot-toast';
 
-// Fix icone Leaflet
+
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
@@ -25,7 +25,7 @@ const tractorIcon = new L.Icon({
 });
 
 function Dashboard() {
-    const { token, user, setSelectedField } = useAuth(); // ho tolto logout dall'oggetto
+    const { token, user, setSelectedField } = useAuth();
     const navigate = useNavigate();
     
     const [fields, setFields] = useState([]);
@@ -33,7 +33,6 @@ function Dashboard() {
     const [stats, setStats] = useState({ totalHectares: 0, fieldCount: 0 });
     const [loading, setLoading] = useState(true);
 
-    // const getAuthHeader = () => ({ headers: { Authorization: `Bearer ${token}` } }); // ora axios lo gestisce globalmente
 
     useEffect(() => {
         const fetchData = async () => {
@@ -71,13 +70,12 @@ function Dashboard() {
 
     }, [token]);
 
-    // --- NUOVA FUNZIONE: CANCELLA TUTTI GLI AVVISI ---
+    // CANCELLA TUTTI GLI AVVISI
     const handleClearAlerts = async () => {
         if (alerts.length === 0) return;
         if (!window.confirm("Vuoi archiviare tutti gli avvisi visualizzati in Dashboard?")) return;
 
         try {
-            // Chiamata DELETE senza parametri per cancellarli tutti (globalmente per l'utente)
             await axios.post(`${API_GATEWAY_URL}/archive-alerts`);
             toast.success("Avvisi archiviati con successo!");
             setAlerts([]); // Pulisce la vista immediatamente
@@ -120,7 +118,7 @@ function Dashboard() {
         <div className="page-container">
             <Toaster position="top-right" />
             
-            {/* WELCOME BANNER MODERNIZZATO */}
+            {/* WELCOME BANNER */}
             <div className="glass-card" style={{ 
                 background: 'linear-gradient(120deg, #10b981 0%, #059669 100%)', 
                 color: 'white', 

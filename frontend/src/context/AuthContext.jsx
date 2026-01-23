@@ -1,4 +1,3 @@
-// frontend/src/context/AuthContext.jsx
 import { createContext, useState, useContext, useEffect } from "react";
 import axios from "axios";
 import { useNavigate, useLocation, Navigate } from "react-router-dom";
@@ -8,11 +7,10 @@ const API = "https://localhost:8000";
 
 export const AuthProvider = ({ children }) => {
   const navigate = useNavigate();
-  // const location = useLocation();
 
   const [user, setUser] = useState(null);
   const [token, setToken] = useState(localStorage.getItem("token") || null);
-  // Aggiungiamo uno stato di caricamento per evitare flash o redirect errati
+  // Stato di caricamento per evitare flash o redirect errati
   const [loading, setLoading] = useState(true);
 
   const [selectedField, setSelectedField] = useState(() => {
@@ -40,7 +38,7 @@ export const AuthProvider = ({ children }) => {
           console.log("Sessione scaduta o non autorizzata. Login richiesto.");
           logout();
         }
-        // Restituiso l'errore al componente che ha fatto la chiamata
+        // Restituisce l'errore al componente che ha fatto la chiamata
         return Promise.reject(error);
       }
     );
@@ -59,18 +57,12 @@ export const AuthProvider = ({ children }) => {
       setUser(res.data);
     } catch (err) {
       console.error("Errore caricamento profilo utente:", err);
-      // NON rimuoviamo il token subito se è solo un errore di rete.
-      // Lo rimuoviamo solo se è un errore di autorizzazione (401/403)
-      // Check
-      // if (err.response && (err.response.status === 401 || err.response.status === 403)) {
-      //   logout();
-      // }
     } finally {
       setLoading(false);
     }
   };
 
-  // ========= GESTIONE TOKEN =========
+  // GESTIONE TOKEN
   useEffect(() => {
     if (token) {
       localStorage.setItem("token", token);
@@ -85,14 +77,14 @@ export const AuthProvider = ({ children }) => {
       }
     } else {
       localStorage.removeItem("token");
-      // Rimuoviamo l'header di autorizzazione se non c'è token
+      // Rimuoviamo l'header di autorizzazione se non c'è il token
       delete axios.defaults.headers.common['Authorization'];
       setUser(null);
       setLoading(false);
     }
   }, [token]);
 
-  // ========= GESTIONE CAMPO SELEZIONATO =========
+  // GESTIONE CAMPO SELEZIONATO
   useEffect(() => {
     if (selectedField) {
       localStorage.setItem("selectedField", JSON.stringify(selectedField));
@@ -101,7 +93,7 @@ export const AuthProvider = ({ children }) => {
     }
   }, [selectedField]);
 
-  // ========= LOGIN =========
+  // LOGIN
   const login = (jwtToken, userData = null) => {
     setLoading(true); // Inizio login
     setToken(jwtToken);
@@ -127,7 +119,7 @@ export const AuthProvider = ({ children }) => {
         selectedField, 
         setSelectedField,
         loading, 
-        isAuthenticated: !!token // Helper booleano
+        isAuthenticated: !!token
       }}
     >
       {children}
@@ -137,12 +129,11 @@ export const AuthProvider = ({ children }) => {
 
 export const useAuth = () => useContext(AuthContext);
 
-// ========= COMPONENTE ROTTA PROTETTA =========
-// Spostato qui per avere accesso a useAuth
+// COMPONENTE ROTTA PROTETTA
 export const ProtectedRoute = ({ children }) => {
   const { token, loading } = useAuth();
 
-  // 1. Se stiamo ancora caricando (check token/fetch user), mostriamo uno spinner o nulla
+  // 1. Se stiamo ancora caricando (check token/fetch user), mostriamo un caricamento
   if (loading) {
     return <div style={{ textAlign: "center", marginTop: "50px" }}>Caricamento in corso...</div>;
   }

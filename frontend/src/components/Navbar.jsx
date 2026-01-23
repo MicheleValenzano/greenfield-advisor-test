@@ -24,7 +24,7 @@ const Navbar = () => {
                             width: 'auto', 
                             objectFit: 'contain', 
                             borderRadius: '8px',
-                            mixBlendMode: 'multiply' // Rende trasparente lo sfondo bianco del JPG
+                            mixBlendMode: 'multiply'
                         }} 
                     />
                 </div>

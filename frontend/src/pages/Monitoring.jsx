@@ -46,7 +46,7 @@ function Monitoring() {
     }, [historyLimit]);
 
     
-    // STATI FORM (Inizializzati vuoti, verranno popolati dall'useEffect)
+    // STATI FORM (Inizializzati vuoti, verranno popolati all'inserimento dei dati nei form)
     const [newSensor, setNewSensor] = useState({ sensor_id: '', location: '', sensor_type: '' });
     const [newRule, setNewRule] = useState({ sensor_type: '', condition: '>', threshold: '', message: '' });
     const [loading, setLoading] = useState(true);
@@ -59,8 +59,8 @@ function Monitoring() {
         if (!selectedField) navigate('/fields'); 
     }, [selectedField, navigate]);
     
-    // --- AUTO-SELEZIONE TIPO SENSORE E REGOLA ---
-    // Appena caricano i sensorTypes, impostiamo il valore di default per entrambi i form
+    // AUTO-SELEZIONE TIPO SENSORE E REGOLA
+    // Appena vengono caricati i sensorTypes, viene impostato il valore di default per entrambi i form
     useEffect(() => {
         if (sensorTypes.length > 0) {
             const defaultType = sensorTypes[0].type_name;
@@ -69,7 +69,7 @@ function Monitoring() {
             if (newRule.sensor_type === '') {
                 setNewRule(prev => ({ ...prev, sensor_type: defaultType }));
             }
-            // Per i Sensori (Nuova modifica)
+            // Per i Sensori
             if (newSensor.sensor_type === '') {
                 setNewSensor(prev => ({ ...prev, sensor_type: defaultType }));
             }
@@ -124,10 +124,8 @@ function Monitoring() {
             if (results[4].status === 'fulfilled') setAlerts(results[4].value.data);
             if (results[5].status === 'fulfilled') setSensorTypes(results[5].value.data);
 
-            console.log("Readings fetched:", results[1].value.data);
-
         } catch (error) { 
-            console.log(error);
+            console.error(error);
         } finally {
             setLoading(false);
         }
@@ -167,11 +165,10 @@ function Monitoring() {
             // Quando arriva un messaggio
             socket.onmessage = (event) => {
                 try {
-                    console.log("Messaggio WebSocket ricevuto:", event.data);
                     const response = JSON.parse(event.data);
                     const { type, data } = response;
 
-                    // Gestione alert nuove letture
+                    // Gestione nuove letture
                     if (type === 'reading') {
                         setReadings(prevReadings => {
                             const updatedReadings = [data, ...prevReadings];
@@ -205,7 +202,6 @@ function Monitoring() {
             }
 
             socket.onclose = (event) => {
-                console.log(`Connessione WebSocket chiusa pulitamente, codice=${event.code} motivo=${event.reason}`);
 
                 if (successToastId) {
                     toast.dismiss(successToastId);
@@ -236,7 +232,7 @@ function Monitoring() {
 
     }, [selectedField, token]);
 
-    // --- HANDLERS ---
+    // HANDLERS
 
     const handleRegisterSensor = async (e) => {
         e.preventDefault();
@@ -282,7 +278,6 @@ function Monitoring() {
             toast.success("Sensore rimosso");
             fetchData();
         } catch (err) {
-            console.log(err);
             toast.error("Errore");
         }
     };
@@ -318,7 +313,7 @@ function Monitoring() {
         }
     };
 
-    // --- HELPERS VISIVI ---
+    // HELPERS VISIVI
 
     const truncateText = (text, limit) => {
         if (!text) return '';
@@ -338,7 +333,7 @@ function Monitoring() {
         });
     };
 
-    // --- ELABORAZIONE DATI GRAFICO ---
+    // ELABORAZIONE DATI GRAFICO
 
     const { chartData, activeCurves, unitsMap } = useMemo(() => {
         if (!readings || readings.length === 0) {
@@ -385,7 +380,7 @@ function Monitoring() {
 
         data.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
 
-        // Curve attive = una per tipo sensore
+        // Curve attive, una per tipo di sensore
         const sensorTypesSet = new Set();
         readings.forEach(r =>
             sensorTypesSet.add(
@@ -421,7 +416,6 @@ function Monitoring() {
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
                                 <h3 style={{ margin: 0, color: '#1e3a8a' }}>📊 Andamento Medio Rilevazioni Sensori</h3>
                                 
-                                {/* NUOVA SELECT */}
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                     <label htmlFor="limitSelect" style={{ fontSize: '0.85rem', color: '#6b7280', whiteSpace: 'nowrap', margin: 0 }}>Mostra:</label>
                                     <select 

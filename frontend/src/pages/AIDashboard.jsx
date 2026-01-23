@@ -29,12 +29,12 @@ function AIDashboard() {
     const ws = useRef(null);
     const errorToastId = useRef(null);
     
-    // NOTA: Inizializziamo readings come oggetto vuoto {}, non array []
+    // Stati per dati e caricamento
     const [readings, setReadings] = useState({});
     const [aiResult, setAiResult] = useState(null);
     const [loadingAi, setLoadingAi] = useState(false);
 
-    // Stati immagini
+    // Stati per gestione immagini
     const [processedImage, setProcessedImage] = useState(null);
     const [imageAnalysis, setImageAnalysis] = useState(null);
     const [uploadingImg, setUploadingImg] = useState(false);
@@ -54,7 +54,6 @@ function AIDashboard() {
 
         try {
             const res = await axios.get(`${API_GATEWAY_URL}/fields/${field}/latest-types-readings`);
-            // res.data è del tipo: { temperature: [...], humidity: [...] }
             setReadings(res.data);
         } catch (e) { 
             console.error(e); 
@@ -98,16 +97,15 @@ function AIDashboard() {
             // Quando arriva un messaggio
             socket.onmessage = (event) => {
                 try {
-                    console.log("Messaggio WebSocket ricevuto:", event.data);
                     const response = JSON.parse(event.data);
                     const { type, data } = response;
 
-                    // Gestione alert nuove letture
+                    // Gestione nuove letture
                     if (type === 'reading') {
                         const sensorType = data.sensor_type;
                         setReadings(prevReadings => {
                             const currentList = prevReadings[sensorType] || [];
-                            const updatedList = [data, ...currentList].slice(0, HISTORY_LIMIT); // Mantieni solo gli ultimi N elementi
+                            const updatedList = [data, ...currentList].slice(0, HISTORY_LIMIT); // Mantiene solo gli ultimi HISTORY_LIMIT elementi
                             return { ...prevReadings, [sensorType]: updatedList };
                         })
                     }
@@ -128,7 +126,6 @@ function AIDashboard() {
             }
 
             socket.onclose = (event) => {
-                console.log(`Connessione WebSocket chiusa pulitamente, codice=${event.code} motivo=${event.reason}`);
 
                 if (successToastId) {
                     toast.dismiss(successToastId);
@@ -159,23 +156,23 @@ function AIDashboard() {
 
     }, [selectedField, token]);
 
-    // --- LOGICA DI AGGREGAZIONE E PREPARAZIONE DATI GRAFICI ---
+    // LOGICA DI AGGREGAZIONE E PREPARAZIONE DATI GRAFICI
     const chartsData = useMemo(() => {
         if (!readings || Object.keys(readings).length === 0) return [];
 
-        // Iteriamo su ogni chiave (es. "temperature", "humidity")
+        // Iteriamo su ogni chiave (tipo di sensore, es. "temperature", "humidity")
         return Object.keys(readings).map(sensorType => {
             const rawData = readings[sensorType];
             
-            // 1. Raggruppamento per timestamp (ignorando millisecondi)
+            // 1. Raggruppamento per timestamp (al minuto, ignorando secondi e millisecondi)
             const grouped = {};
-            let unit = ""; // Cerchiamo di catturare l'unità dal primo dato disponibile
+            let unit = "";
 
             rawData.forEach(item => {
                 if(!unit && item.unit) unit = item.unit;
 
                 const date = new Date(item.timestamp);
-                date.setSeconds(0);
+                date.setSeconds(0); // Rimuove i secondi
                 date.setMilliseconds(0); // Rimuove i millisecondi
                 const timeKey = date.toISOString(); // Chiave univoca es: "2026-01-07T14:07:00.000Z"
 
@@ -189,7 +186,7 @@ function AIDashboard() {
             // 2. Calcolo Media e creazione array per Recharts
             const chartData = Object.entries(grouped).map(([timestamp, data]) => ({
                 timestamp,
-                value: Number((data.sum / data.count).toFixed(2)), // Media a 2 decimali
+                value: Number((data.sum / data.count).toFixed(2)), // Media a 2 cifre decimali
                 unit: unit
             })).sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
 
@@ -211,7 +208,7 @@ function AIDashboard() {
         return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     }
 
-    // --- GESTIONE AI E IMMAGINI (Invariata) ---
+    // GESTIONE AI E IMMAGINI
     const handleAskAI = async () => {
         const field = selectedField.field;
         if (!field) return toast.error("Seleziona campo");
@@ -305,7 +302,7 @@ function AIDashboard() {
 
                     </div>
 
-                    {/* COLONNA DESTRA: STRUMENTI AI (Invariato nel layout, ma codice incluso per completezza) */}
+                    {/* COLONNA DESTRA: STRUMENTI AI */}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
                         
                         {/* AI PREDICTOR */}
@@ -342,7 +339,6 @@ function AIDashboard() {
                                                 <strong>Input Analizzati (Medie):</strong><br/>
                                                 
                                                 {aiResult.details?.input_recieved && Object.entries(aiResult.details.input_recieved).map(([k, data]) => {
-                                                    // Verifica se il dato è nel nuovo formato oggetto o nel vecchio formato (numero) per retrocompatibilità
                                                     const value = data?.value !== undefined ? data.value : data;
                                                     const unit = data?.unit || '';
 

@@ -5,7 +5,7 @@ import Navbar from '../components/Navbar';
 const MainLayout = () => {
     return (
         <div className="main-layout">
-            {/* Navbar "Sticky" in alto */}
+            {/* Navbar "Sticky" */}
             <Navbar />
             
             {/* Contenuto della pagina che cambia */}

@@ -3,7 +3,6 @@ import { useNavigate, Link } from 'react-router-dom';
 import axios from 'axios';
 import toast, { Toaster } from 'react-hot-toast';
 
-// Loghi (assumendo che siano nella stessa cartella assets di Login)
 import logoIntero from '../assets/LOGO_1.jpg';
 
 const API_GATEWAY_URL = "https://localhost:8000";
@@ -46,7 +45,7 @@ function Register() {
         password: password
       };
 
-      await axios.post(`${API_GATEWAY_URL}/register`, payload); // Assicurati che l'endpoint sia corretto (es. /auth/register o solo /register a seconda del backend)
+      await axios.post(`${API_GATEWAY_URL}/register`, payload);
       
       toast.success("Account creato con successo!", { id: loadingToast });
       setTimeout(() => navigate('/login'), 2000);

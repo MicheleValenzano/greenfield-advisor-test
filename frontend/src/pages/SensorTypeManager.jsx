@@ -6,7 +6,7 @@ import toast, { Toaster } from 'react-hot-toast';
 const API_GATEWAY_URL = "https://localhost:8000";
 
 const SensorTypeManager = () => {
-    const { token } = useAuth(); // Ho tolto logout
+    const { token } = useAuth();
     const [sensorTypes, setSensorTypes] = useState([]);
     const [typeForm, setTypeForm] = useState({ type_name: '', description: '', unit: '' });
     const [loading, setLoading] = useState(true);
@@ -56,7 +56,7 @@ const SensorTypeManager = () => {
             setTypeForm({ type_name: '', description: '', unit: '' });
             fetchSensorTypes();
         } catch (err) {
-            console.log(err);
+            console.error(err);
 
             if (!err.response) {
                 toast.error("Errore di connessione. Riprova più tardi.", { id: toastId });

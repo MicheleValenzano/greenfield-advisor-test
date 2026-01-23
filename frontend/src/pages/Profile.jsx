@@ -77,7 +77,7 @@ export default function Profile() {
 
     try {
       const updated = await axios.put(`${API}/users/me`, payload, {
-        headers: { "Content-Type": "application/json" } // qui ho cancellato "Authorization": "Bearer " + token, (perché dovrebbe già farlo l'interceptor, in caso rimettilo)
+        headers: { "Content-Type": "application/json" }
       });
 
       setUser(updated.data);
@@ -118,10 +118,6 @@ export default function Profile() {
         new_password: passForm.new_password
       });
 
-      // , {
-      //   headers: { "Authorization": "Bearer " + token, "Content-Type": "application/json" }
-      // }
-
       toast.success("Password modificata con successo!", { id: toastId });
       setIsChangingPassword(false);
       setPassForm({ current_password: "", new_password: "", confirm_password: "" });
@@ -156,7 +152,7 @@ export default function Profile() {
              </h2>
         </div>
 
-        {/* --- HEADER UTENTE --- */}
+        {/* HEADER UTENTE */}
         <div style={{ textAlign: "center", marginBottom: '2rem', paddingBottom: '2rem', borderBottom: '1px solid #eee' }}>
           <div style={{ 
             width: 90, height: 90, borderRadius: "50%", 
@@ -172,7 +168,7 @@ export default function Profile() {
           <div className="text-muted" style={{ fontSize: '0.95rem' }}>{user.email}</div>
         </div>
 
-        {/* --- SEZIONE INFO PROFILO --- */}
+        {/* SEZIONE INFO PROFILO */}
         {!isEditingProfile ? (
           <div style={{ marginBottom: '2rem' }}>
             <div className="flex-between" style={{ marginBottom: '1rem' }}>
@@ -253,7 +249,7 @@ export default function Profile() {
           </form>
         )}
 
-        {/* --- SEZIONE SICUREZZA (PASSWORD) --- */}
+        {/* SEZIONE SICUREZZA (PASSWORD) */}
         {!isChangingPassword ? (
           <div style={{ borderTop: '1px solid #eee', paddingTop: '1.5rem', marginTop: '1rem' }}>
             <div className="flex-between">
@@ -309,7 +305,7 @@ export default function Profile() {
   );
 }
 
-// Piccolo componente per mostrare i dati in sola lettura (più pulito)
+// Componente per mostrare i dati in sola lettura
 const ProfileCard = ({ label, value, fullWidth, isBio }) => (
     <div className="glass-card" style={{ 
         padding: '1rem', 

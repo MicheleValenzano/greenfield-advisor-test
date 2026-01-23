@@ -1,11 +1,9 @@
 import React, { useState } from 'react';
-// import { useNavigate } from 'react-router-dom';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import axios from 'axios';
 import toast, { Toaster } from 'react-hot-toast';
 
-// Loghi
 import logoIntero from '../assets/LOGO_1.jpg';
 
 const API_GATEWAY_URL = "https://localhost:8000";
@@ -15,7 +13,6 @@ function Login() {
   const [password, setPassword] = useState('');
   const [fieldErrors, setFieldErrors] = useState({});
 
-  // const navigate = useNavigate();
   const { login } = useAuth();
 
   const handleSubmit = async (e) => {
@@ -28,9 +25,7 @@ function Login() {
       const response = await axios.post(`${API_GATEWAY_URL}/login`, { email, password });
       login(response.data.access_token, response.data.user); 
       toast.success("Benvenuto!", { id: loadingToast });
-      // navigate('/dashboard');
     } catch (err) {
-      console.log(err);
 
       if (!err.response) {
         toast.error("Errore di connessione. Riprova più tardi.", { id: loadingToast });

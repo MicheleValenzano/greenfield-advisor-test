@@ -7,7 +7,7 @@ import { MapContainer, TileLayer, Marker, useMapEvents, useMap } from 'react-lea
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 
-// Fix icone Leaflet
+
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
@@ -25,7 +25,7 @@ function ChangeView({ center, zoom }) {
 
 function MapClickHandler({ setForm, setMarkerPosition, clearError, setMapCenter, setZoom }) {
     useMapEvents({
-        async click(e) { // Nota: aggiunta keyword 'async'
+        async click(e) {
             const { lat, lng } = e.latlng;
             setMarkerPosition([lat, lng]);
 
@@ -33,27 +33,25 @@ function MapClickHandler({ setForm, setMarkerPosition, clearError, setMapCenter,
             setZoom(13);
 
             
-            // 1. Feedback immediato all'utente mentre carichiamo
+            // Feedback immediato all'utente mentre carichiamo
             setForm(prev => ({ 
                 ...prev, 
                 location: `Recupero indirizzo... (${lat.toFixed(4)}, ${lng.toFixed(4)})` 
             }));
             
             try {
-                // 2. Chiamata API Reverse Geocoding (usiamo fetch per evitare problemi di Header Auth/CORS)
+                // Chiamata API Reverse Geocoding (nel backend per evitare CORS)
                 const response = await axios.get(`${API_GATEWAY_URL}/fields/geocoding/reverse`, {
                     params: { lat: lat, lon: lng }
                 })
-
-                // console.log("Reverse geocoding response:", response);
                 
                 const data = response.data;
                 
-                // 3. Logica di estrazione nome (Priorità: town -> city -> village -> display_name parziale)
+                // Logica di estrazione nome (Priorità: town -> city -> village -> display_name parziale)
                 const addr = data.address || {};
                 const cityName = addr.town || addr.city || addr.village || addr.hamlet || addr.municipality || (data.display_name ? data.display_name.split(',')[0] : "Posizione sconosciuta");
 
-                // 4. Aggiornamento finale del form
+                // Aggiornamento finale del form
                 setForm(prev => ({ 
                     ...prev, 
                     location: `${cityName} (${lat.toFixed(4)}, ${lng.toFixed(4)})` 
@@ -91,7 +89,7 @@ const FieldManager = () => {
 
     const [fieldErrors, setFieldErrors] = useState({});
 
-    // NUOVI STATI PER L'AUTOCOMPLETAMENTO
+    // STATI PER L'AUTOCOMPLETAMENTO
     const [citySuggestions, setCitySuggestions] = useState([]);
     const [loadingCities, setLoadingCities] = useState(false);
 
@@ -105,7 +103,7 @@ const FieldManager = () => {
         borderColor: fieldErrors[fieldName] ? 'var(--danger, #dc3545)' : '',
     });
 
-    // --- FUNZIONI DI RICERCA CITTÀ --- TODO
+    // FUNZIONI DI RICERCA CITTÀ
     // Funzione per effettuare la ricerca API e popolare i suggerimenti
     const searchLocation = async (query = form.location) => {
         if (!query || query.length < 2) {
@@ -128,8 +126,6 @@ const FieldManager = () => {
                     lng: place.longitude
                 })));
 
-                // Se l'utente preme il pulsante 🔍 (e non è solo l'input che cambia),
-                // ci concentriamo sul primo risultato e navighiamo la mappa.
                 if (query === form.location && form.location.length >= 2) {
                     const place = response.data.results[0];
                     const lat = place.latitude;
@@ -143,7 +139,6 @@ const FieldManager = () => {
                 }
             } else {
                 setCitySuggestions([]);
-                // Solo se la ricerca è stata attivata dal pulsante, mostriamo l'errore
                 if (query === form.location) {
                     toast.error("Località non trovata");
                 }
@@ -159,18 +154,18 @@ const FieldManager = () => {
     const handleSelectSuggestion = (suggestion) => {
         const { name, lat, lng } = suggestion;
 
-        // 1. Aggiorna il campo Form con il nome e le coordinate per la registrazione
+        // Aggiorna il campo Form con il nome e le coordinate per la registrazione
         setForm(prev => ({
             ...prev,
             location: `${name} (${lat.toFixed(4)}, ${lng.toFixed(4)})`
         }));
 
-        // 2. Aggiorna la Mappa e il Marker
+        // Aggiorna la Mappa e il Marker
         setMapCenter([lat, lng]);
         setMarkerPosition([lat, lng]);
         setZoom(13);
 
-        // 3. Chiudi l'elenco dei suggerimenti
+        // Chiude l'elenco dei suggerimenti
         setCitySuggestions([]);
         toast.success(`Posizione impostata su: ${name}`);
     };
@@ -179,11 +174,10 @@ const FieldManager = () => {
     const handleLocationInputChange = (e) => {
         const value = e.target.value;
         setForm({...form, location: value});
-        // Ricerca automatica per popolare l'autocomplete (senza debounce per semplicità)
+        // Ricerca automatica per popolare l'autocomplete
         clearFieldError('location');
         searchLocation(value);
     };
-    // --- FINE LOGICA AUTOCOMPLETAMENTO ---
 
     const fetchFields = async () => {
         if (!token) return;
@@ -274,7 +268,7 @@ const FieldManager = () => {
         <div className="page-container">
             <Toaster position="top-right" />
 
-            {/* HEADER BANNER - STILE VERDE (AGRI) */}
+            {/* HEADER BANNER */}
             <div className="glass-card" style={{
                 background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
                 color: 'white',
@@ -312,7 +306,7 @@ const FieldManager = () => {
                                 type="text"
                                 placeholder={loadingCities ? 'Caricamento suggerimenti...' : 'Città o clicca mappa'}
                                 value={form.location}
-                                onChange={handleLocationInputChange} // Usa il nuovo handler
+                                onChange={handleLocationInputChange}
                                 onBlur={() => setTimeout(() => setCitySuggestions([]), 200)} // Chiude i suggerimenti dopo un breve ritardo
                                 className="input-field"
                                 style={{width: '100%', borderBottomLeftRadius: citySuggestions.length > 0 ? 0 : '0.5rem', borderBottomRightRadius: citySuggestions.length > 0 ? 0 : '0.5rem', ...getInputStyle('location')}}
@@ -422,7 +416,7 @@ const FieldManager = () => {
                  </div>
              </div>
 
-             {/* LISTA CAMPI (BENTO GRID) */}
+             {/* LISTA CAMPI */}
              <div>
                  <h3 style={{ color: 'var(--text-main)', marginBottom:'1.5rem' }}>Le tue Colture</h3>
                  
