@@ -1,3 +1,5 @@
 .env
 .DS_Store
 backup/
+/apicall.txt
+/test_ws.html
